@@ -1,0 +1,41 @@
+# 跨平台协作的基本约定：换行与二进制标记
+#
+# 不设 * text=auto 的裸写法，而是明确按文本处理源码，避免 Windows 检出 CRLF 后
+# 整个仓库的 diff 全部变成「改了一行、实际改的是行尾」。
+
+* text=auto eol=lf
+
+*.js text eol=lf
+*.cjs text eol=lf
+*.mjs text eol=lf
+*.json text eol=lf
+*.css text eol=lf
+*.html text eol=lf
+*.md text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.sh text eol=lf
+
+# Windows 专用脚本保留 CRLF
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
+
+# 二进制：不要让 git 尝试按文本 diff 或转换
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.webp binary
+*.gif binary
+*.ico binary
+*.icns binary
+*.pdf binary
+*.zip binary
+*.exe binary
+*.dll binary
+*.node binary
+*.woff binary
+*.woff2 binary
+
+# 归档与截图：不做行尾处理
+*.snap binary

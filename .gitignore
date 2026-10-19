@@ -1,0 +1,46 @@
+node_modules/
+
+# 构建产物：packager 用 build/、release/，builder 用 dist/
+.build-cache/
+build/
+release/
+dist/
+out/
+backups/
+artifacts/
+
+# 运行期数据：含真实对话、资料库与密钥，绝不能进仓库
+.local-data/
+.test-data/
+.verification-profile/
+Iris-data/
+Duet-data/
+
+# 日志与临时
+.npm-cache/
+*.log
+schema-*.json
+.coordinator-schema.json
+*.tmp
+.tmp/
+
+# 文档历史备份：版本库本身就是历史，备份目录只会把旧稿与本机路径带进来
+docs/backups/
+
+# 系统垃圾
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# 编辑器
+.vscode/*
+!.vscode/extensions.json
+.idea/
+*.swp
+*~

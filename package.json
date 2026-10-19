@@ -1,0 +1,135 @@
+{
+  "name": "iris-unite",
+  "productName": "Iris Unite",
+  "version": "0.6.0",
+  "description": "Iris Unite 多模型对话与科研工作台",
+  "main": "main.cjs",
+  "private": true,
+  "author": "Tibo",
+  "license": "MIT",
+  "scripts": {
+    "prepare:ui": "node scripts/prepare-ui.cjs",
+    "diagram": "node scripts/architecture-diagram.cjs && electron scripts/rasterize-diagram.cjs",
+    "prestart": "npm run prepare:ui",
+    "pretest:ui": "npm run prepare:ui",
+    "pretest:frontend": "npm run prepare:ui",
+    "prepackage": "npm run prepare:ui",
+    "start": "electron .",
+    "test": "node --test tests/*.test.cjs",
+    "test:all": "node scripts/run-all-checks.cjs",
+    "test:ui": "electron . --smoke-test",
+    "test:frontend": "electron . --frontend-test",
+    "package": "electron-packager . IrisUnite --platform=win32 --arch=x64 --out=build --icon=assets/iris.ico --win32metadata.ProductName=\"Iris Unite\" --win32metadata.FileDescription=\"Iris Unite\" --overwrite --ignore=\"^/(build|backups|release|tests|artifacts|.local-data|.test-data|.verification-profile|README.md)\"",
+    "icons": "electron scripts/make-icons.cjs",
+    "dist": "electron-builder",
+    "dist:win": "electron-builder --win",
+    "dist:mac": "electron-builder --mac",
+    "dist:linux": "electron-builder --linux",
+    "dist:dir": "electron-builder --dir"
+  },
+  "dependencies": {
+    "dompurify": "^3.4.17",
+    "js-yaml": "^5.5.0",
+    "marked": "^18.1.1"
+  },
+  "devDependencies": {
+    "@electron/packager": "^20.3.0",
+    "@tabler/icons": "^3.49.0",
+    "axe-core": "^4.14.0",
+    "electron": "44.9.0",
+    "electron-builder": "^26.15.3"
+  },
+  "build": {
+    "appId": "io.github.irisunite",
+    "productName": "Iris Unite",
+    "copyright": "Iris Unite",
+    "directories": {
+      "output": "dist",
+      "buildResources": "assets"
+    },
+    "files": [
+      "main.cjs",
+      "preload.cjs",
+      "package.json",
+      "core/**/*",
+      "renderer/**/*",
+      "assets/**/*",
+      "!**/*.map",
+      "!**/*.md",
+      "!**/.DS_Store"
+    ],
+    "asar": true,
+    "compression": "normal",
+    "win": {
+      "icon": "assets/iris.ico",
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "deleteAppDataOnUninstall": false
+    },
+    "mac": {
+      "icon": "assets/iris.icns",
+      "category": "public.app-category.productivity",
+      "identity": null,
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "arm64",
+            "x64"
+          ]
+        },
+        {
+          "target": "zip",
+          "arch": [
+            "arm64",
+            "x64"
+          ]
+        }
+      ]
+    },
+    "dmg": {
+      "window": {
+        "width": 540,
+        "height": 380
+      }
+    },
+    "linux": {
+      "icon": "assets/iris.png",
+      "category": "Utility",
+      "maintainer": "Iris Unite",
+      "target": [
+        "AppImage",
+        "deb"
+      ]
+    },
+    "deb": {
+      "depends": [
+        "libgtk-3-0",
+        "libnotify4",
+        "libnss3",
+        "libxss1",
+        "libxtst6",
+        "xdg-utils",
+        "libatspi2.0-0",
+        "libsecret-1-0"
+      ]
+    }
+  }
+}

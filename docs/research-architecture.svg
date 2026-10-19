@@ -1,0 +1,139 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1240" height="1538" viewBox="0 0 1240 1538" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif">
+<rect width="1240" height="1538" fill="#ffffff"/>
+<text x="56" y="56" font-size="29" font-weight="600" fill="#0f1115">Iris Unite 科研流程</text>
+<text x="56" y="84" font-size="14.5" fill="#61666b">先检索真实文献建立资料库，再在证据范围内推演，最后把每处引用核对回资料库。</text>
+<text x="56" y="106" font-size="13.5" fill="#6d7278">共 11 个环节，其中 3 个是机械环节；档位决定这一轮跑哪几个环节，环节内部的模型与推理强度逐个可选。</text>
+<text x="56" y="128" font-size="12" fill="#6d7278">本图由 core/research.cjs 的 STAGES 与 core/profiles.cjs 的三档规则生成：改完流程重跑 npm run diagram 即可同步。</text>
+<rect x="56" y="158" width="1128" height="156" rx="16" fill="#f9fafb" stroke="#0000001f" stroke-width="0.5"/>
+<text x="76" y="184" font-size="13" font-weight="600" fill="#0f1115">三档路线</text>
+<text x="152" y="184" font-size="11" fill="#6d7278">同一套环节，按档位裁剪；基准调用是正常成功路径，不含可选深化</text>
+<text x="76" y="210" font-size="12.5" font-weight="600" fill="#0f1115">速查</text>
+<rect x="1102" y="195" width="62" height="20" rx="10" fill="#eaf2ff" stroke="#c7dcff" stroke-width="0.5"/>
+<text x="1133" y="209" font-size="10.5" text-anchor="middle" fill="#2563eb">基准 3 次</text>
+<text x="134" y="210" font-size="11" fill="#61666b">研究界定 → 资料检索 → 证据提取 → 要点汇总 → 引用核验 → 终审自检</text>
+<text x="76" y="240" font-size="12.5" font-weight="600" fill="#0f1115">综述</text>
+<rect x="1102" y="225" width="62" height="20" rx="10" fill="#eaf2ff" stroke="#c7dcff" stroke-width="0.5"/>
+<text x="1133" y="239" font-size="10.5" text-anchor="middle" fill="#2563eb">基准 7 次</text>
+<text x="134" y="240" font-size="11" fill="#61666b">研究界定 → 资料检索 → 证据提取 → 问题分解 → 并行研究 → 候选筛选 → 定向深化 → 反证与整合 → 引用核验 → 终审自检</text>
+<text x="76" y="270" font-size="12.5" font-weight="600" fill="#6d7278">教学</text>
+<rect x="1098" y="255" width="66" height="20" rx="10" fill="#00000012" stroke="#0000001f" stroke-width="0.5"/>
+<text x="1131" y="269" font-size="10.5" text-anchor="middle" fill="#6d7278">本期未实现</text>
+<text x="134" y="270" font-size="11" fill="#6d7278">研究界定 → 资料检索 → 证据提取 → 教学大纲 → 分节生成 → 例题审查 → 反证与整合 → 引用核验 → 终审自检</text>
+<text x="314" y="318" font-size="11.5" font-weight="600" fill="#6d7278">环节（★ 可独立选模型）</text>
+<text x="800" y="318" font-size="11.5" font-weight="600" fill="#6d7278">产出物</text>
+<rect x="56" y="334" width="1128" height="264" rx="16" fill="#eef4ff" stroke="#0000001f" stroke-width="0.5"/>
+<text x="78" y="362" font-size="14" font-weight="600" fill="#0f1115">检索</text>
+<text x="78" y="381" font-size="11" fill="#6d7278">真实学术接口，无需密钥；这一阶段决定后</text>
+<text x="78" y="396" font-size="11" fill="#6d7278">面能用什么证据。</text>
+<rect x="314" y="378" width="452" height="52" rx="11" fill="#ffffff" stroke="#0000001f" stroke-width="0.5"/>
+<text x="330" y="400" font-size="13.5" font-weight="600" fill="#0f1115">★ 研究界定</text>
+<rect x="688" y="394" width="64" height="20" rx="10" fill="#f9fafb" stroke="#0000001f" stroke-width="0.5"/>
+<text x="720" y="408" font-size="10.5" text-anchor="middle" fill="#61666b">1 次调用</text>
+<text x="330" y="417" font-size="11" fill="#6d7278">把问题拆成可检索的研究问题、检索式与纳入排除标准</text>
+<rect x="314" y="439" width="452" height="52" rx="11" fill="#ffffff" stroke="#0000001f" stroke-width="0.5"/>
+<text x="330" y="461" font-size="13.5" font-weight="600" fill="#0f1115">资料检索</text>
+<rect x="674" y="455" width="78" height="20" rx="10" fill="#eaf2ff" stroke="#0000001f" stroke-width="0.5"/>
+<text x="713" y="469" font-size="10.5" text-anchor="middle" fill="#2563eb">不消耗调用</text>
+<text x="330" y="478" font-size="11" fill="#6d7278">真实检索多个学术源，建立资料库并分配引用键</text>
+<rect x="314" y="500" width="452" height="52" rx="11" fill="#ffffff" stroke="#0000001f" stroke-width="0.5"/>
+<text x="330" y="522" font-size="13.5" font-weight="600" fill="#0f1115">★ 证据提取</text>
+<rect x="688" y="516" width="64" height="20" rx="10" fill="#f9fafb" stroke="#0000001f" stroke-width="0.5"/>
+<text x="720" y="530" font-size="10.5" text-anchor="middle" fill="#61666b">1 次调用</text>
+<text x="330" y="539" font-size="11" fill="#6d7278">只从资料库记录里抽取结论与证据强度，标注证据缺口</text>
+<rect x="800" y="378" width="384" height="58" rx="10" fill="#ffffff" stroke="#00000012" stroke-width="0.5"/>
+<text x="814" y="399" font-size="12" font-weight="600" fill="#0f1115">研究问题与检索式</text>
+<text x="814" y="416" font-size="10.5" fill="#6d7278">目标、研究问题、2–6 条检索式、纳入与排除标准</text>
+<rect x="800" y="444" width="384" height="58" rx="10" fill="#eaf2ff" stroke="#c7dcff" stroke-width="0.5"/>
+<text x="814" y="465" font-size="12" font-weight="600" fill="#2563eb">资料库 S1…Sn</text>
+<text x="814" y="482" font-size="10.5" fill="#6d7278">真实题录：标题、作者、年份、期刊、DOI 或 arXiv、摘要</text>
+<rect x="800" y="510" width="384" height="58" rx="10" fill="#ffffff" stroke="#00000012" stroke-width="0.5"/>
+<text x="814" y="531" font-size="12" font-weight="600" fill="#0f1115">证据表</text>
+<text x="814" y="548" font-size="10.5" fill="#6d7278">结论对应引用键；强度分强 / 中 / 弱；单列证据缺口</text>
+<path d="M 350 601 L 350 620" stroke="#00000012" stroke-width="1.5" fill="none"/>
+<path d="M 345.5 614 L 350 620 L 354.5 614" stroke="#00000012" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+<rect x="56" y="624" width="1128" height="309" rx="16" fill="#f4f5f7" stroke="#0000001f" stroke-width="0.5"/>
+<text x="78" y="652" font-size="14" font-weight="600" fill="#0f1115">推演</text>
+<text x="78" y="671" font-size="11" fill="#6d7278">每个环节独立选模型与强度；同阶段任务并</text>
+<text x="78" y="686" font-size="11" fill="#6d7278">行，任一失败即取消其余。</text>
+<rect x="314" y="668" width="452" height="52" rx="11" fill="#ffffff" stroke="#0000001f" stroke-width="0.5"/>
+<text x="330" y="690" font-size="13.5" font-weight="600" fill="#0f1115">★ 问题分解</text>
+<rect x="688" y="684" width="64" height="20" rx="10" fill="#f9fafb" stroke="#0000001f" stroke-width="0.5"/>
+<text x="720" y="698" font-size="10.5" text-anchor="middle" fill="#61666b">1 次调用</text>
+<text x="330" y="707" font-size="11" fill="#6d7278">分解任务、规定交付物与评审准则</text>
+<rect x="314" y="729" width="452" height="52" rx="11" fill="#ffffff" stroke="#0000001f" stroke-width="0.5"/>
+<text x="330" y="751" font-size="13.5" font-weight="600" fill="#0f1115">★ 并行研究</text>
+<rect x="688" y="745" width="64" height="20" rx="10" fill="#f9fafb" stroke="#0000001f" stroke-width="0.5"/>
+<text x="720" y="759" font-size="10.5" text-anchor="middle" fill="#61666b">1 次调用</text>
+<text x="330" y="768" font-size="11" fill="#6d7278">各任务独立推演，只能引用资料库已有证据</text>
+<rect x="314" y="790" width="452" height="52" rx="11" fill="#ffffff" stroke="#0000001f" stroke-width="0.5"/>
+<text x="330" y="812" font-size="13.5" font-weight="600" fill="#0f1115">★ 候选筛选</text>
+<rect x="688" y="806" width="64" height="20" rx="10" fill="#f9fafb" stroke="#0000001f" stroke-width="0.5"/>
+<text x="720" y="820" font-size="10.5" text-anchor="middle" fill="#61666b">1 次调用</text>
+<text x="330" y="829" font-size="11" fill="#6d7278">按证据、创新性、可行性与反例筛选，决定是否深化</text>
+<rect x="314" y="851" width="452" height="52" rx="11" fill="#ffffff" stroke="#0000001f" stroke-width="0.5"/>
+<text x="330" y="873" font-size="13.5" font-weight="600" fill="#0f1115">★ 定向深化</text>
+<rect x="688" y="867" width="64" height="20" rx="10" fill="#f9fafb" stroke="#0000001f" stroke-width="0.5"/>
+<text x="720" y="881" font-size="10.5" text-anchor="middle" fill="#61666b">1 次调用</text>
+<text x="330" y="890" font-size="11" fill="#6d7278">被选中的任务在预算内做一轮针对性修订</text>
+<rect x="800" y="668" width="384" height="58" rx="10" fill="#ffffff" stroke="#00000012" stroke-width="0.5"/>
+<text x="814" y="689" font-size="12" font-weight="600" fill="#0f1115">任务分配</text>
+<text x="814" y="706" font-size="10.5" fill="#6d7278">每项任务的职责、交付物、依赖的证据键</text>
+<rect x="800" y="734" width="384" height="58" rx="10" fill="#ffffff" stroke="#00000012" stroke-width="0.5"/>
+<text x="814" y="755" font-size="12" font-weight="600" fill="#0f1115">并行研究成果</text>
+<text x="814" y="772" font-size="10.5" fill="#6d7278">各项任务的路线、机制、可证伪方案与风险</text>
+<rect x="800" y="800" width="384" height="58" rx="10" fill="#ffffff" stroke="#00000012" stroke-width="0.5"/>
+<text x="814" y="821" font-size="12" font-weight="600" fill="#0f1115">筛选与深化</text>
+<text x="814" y="838" font-size="10.5" fill="#6d7278">保留候选、深化要求、缺乏证据的结论</text>
+<path d="M 350 936 L 350 955" stroke="#00000012" stroke-width="1.5" fill="none"/>
+<path d="M 345.5 949 L 350 955 L 354.5 949" stroke="#00000012" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+<rect x="56" y="959" width="1128" height="187" rx="16" fill="#ffffff" stroke="#0000001f" stroke-width="0.5"/>
+<text x="78" y="987" font-size="14" font-weight="600" fill="#0f1115">成文</text>
+<text x="78" y="1006" font-size="11" fill="#6d7278">只产出一份可交付答案，中间材料不进正文</text>
+<text x="78" y="1021" font-size="11" fill="#6d7278">。</text>
+<rect x="314" y="1003" width="452" height="52" rx="11" fill="#ffffff" stroke="#0000001f" stroke-width="0.5"/>
+<text x="330" y="1025" font-size="13.5" font-weight="600" fill="#0f1115">★ 要点汇总</text>
+<rect x="688" y="1019" width="64" height="20" rx="10" fill="#f9fafb" stroke="#0000001f" stroke-width="0.5"/>
+<text x="720" y="1033" font-size="10.5" text-anchor="middle" fill="#61666b">1 次调用</text>
+<text x="330" y="1042" font-size="11" fill="#6d7278">速查档的收口环节：把证据收成带引用的短答案，只讲可核验的部分</text>
+<rect x="314" y="1064" width="452" height="52" rx="11" fill="#ffffff" stroke="#0000001f" stroke-width="0.5"/>
+<text x="330" y="1086" font-size="13.5" font-weight="600" fill="#0f1115">★ 反证与整合</text>
+<rect x="688" y="1080" width="64" height="20" rx="10" fill="#f9fafb" stroke="#0000001f" stroke-width="0.5"/>
+<text x="720" y="1094" font-size="10.5" text-anchor="middle" fill="#61666b">1 次调用</text>
+<text x="330" y="1103" font-size="11" fill="#6d7278">检验证据、替代解释与反例，形成唯一完整答案</text>
+<rect x="800" y="1003" width="384" height="58" rx="10" fill="#ffffff" stroke="#00000012" stroke-width="0.5"/>
+<text x="814" y="1024" font-size="12" font-weight="600" fill="#0f1115">唯一完整答案</text>
+<text x="814" y="1041" font-size="10.5" fill="#6d7278">结论、假设、待验证问题分层；正文引用只写 [S3] 形式</text>
+<path d="M 350 1149 L 350 1168" stroke="#00000012" stroke-width="1.5" fill="none"/>
+<path d="M 345.5 1162 L 350 1168 L 354.5 1162" stroke="#00000012" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+<rect x="56" y="1172" width="1128" height="198" rx="16" fill="#f7f8fa" stroke="#0000001f" stroke-width="0.5"/>
+<text x="78" y="1200" font-size="14" font-weight="600" fill="#0f1115">校验</text>
+<text x="78" y="1219" font-size="11" fill="#6d7278">机械环节：不调用模型、不消耗预算，但结</text>
+<text x="78" y="1234" font-size="11" fill="#6d7278">论写进答案页脚。</text>
+<rect x="314" y="1216" width="452" height="52" rx="11" fill="#ffffff" stroke="#0000001f" stroke-width="0.5"/>
+<text x="330" y="1238" font-size="13.5" font-weight="600" fill="#0f1115">引用核验</text>
+<rect x="674" y="1232" width="78" height="20" rx="10" fill="#eaf2ff" stroke="#0000001f" stroke-width="0.5"/>
+<text x="713" y="1246" font-size="10.5" text-anchor="middle" fill="#2563eb">不消耗调用</text>
+<text x="330" y="1255" font-size="11" fill="#6d7278">逐个核对答案里的引用，无法核验的当场移除</text>
+<rect x="314" y="1277" width="452" height="52" rx="11" fill="#ffffff" stroke="#0000001f" stroke-width="0.5"/>
+<text x="330" y="1299" font-size="13.5" font-weight="600" fill="#0f1115">终审自检</text>
+<rect x="674" y="1293" width="78" height="20" rx="10" fill="#eaf2ff" stroke="#0000001f" stroke-width="0.5"/>
+<text x="713" y="1307" font-size="10.5" text-anchor="middle" fill="#2563eb">不消耗调用</text>
+<text x="330" y="1316" font-size="11" fill="#6d7278">检查预算、证据覆盖与编造痕迹，可选一次模型复核</text>
+<rect x="800" y="1216" width="384" height="58" rx="10" fill="#eaf2ff" stroke="#c7dcff" stroke-width="0.5"/>
+<text x="814" y="1237" font-size="12" font-weight="600" fill="#2563eb">核验报告</text>
+<text x="814" y="1254" font-size="10.5" fill="#6d7278">可核验 X 处 / 移除 Y 处无法核验的引用</text>
+<rect x="800" y="1282" width="384" height="58" rx="10" fill="#ffffff" stroke="#00000012" stroke-width="0.5"/>
+<text x="814" y="1303" font-size="12" font-weight="600" fill="#0f1115">自检结论</text>
+<text x="814" y="1320" font-size="10.5" fill="#6d7278">预算、证据覆盖、编造痕迹；可选一次模型复核</text>
+<rect x="56" y="1390" width="1128" height="88" rx="14" fill="#f9fafb" stroke="#0000001f" stroke-width="0.5"/>
+<text x="80" y="1418" font-size="12" font-weight="600" fill="#0f1115">预算计数器</text>
+<text x="80" y="1437" font-size="10.5" fill="#6d7278">每次调用前计数，失败也计数；终审固定预留一次，深化按余额裁剪并写明原</text>
+<text x="80" y="1451" font-size="10.5" fill="#6d7278">因。</text>
+<text x="445.3333333333333" y="1418" font-size="12" font-weight="600" fill="#0f1115">低成本监控</text>
+<text x="445.3333333333333" y="1437" font-size="10.5" fill="#6d7278">只读内存快照：停滞、重复产物、反复失败时停下并留下现场；破坏性动作需</text>
+<text x="445.3333333333333" y="1451" font-size="10.5" fill="#6d7278">两次确认。</text>
+<text x="810.6666666666666" y="1418" font-size="12" font-weight="600" fill="#0f1115">核验回路</text>
+<text x="810.6666666666666" y="1437" font-size="10.5" fill="#6d7278">引用核验阶段回查资料库：DOI、arXiv 号、引用键对不上的当场移除，绝不</text>
+<text x="810.6666666666666" y="1451" font-size="10.5" fill="#6d7278">留在正文。</text>
+<text x="56" y="1522" font-size="10.5" fill="#6d7278">模型调用环节 8 个 · 机械环节 3 个 · 基准调用：速查 3 / 综述 任务数+5 / 教学 章数+5</text>
+</svg>

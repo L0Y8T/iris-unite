@@ -1,0 +1,10 @@
+Iris 应用图标  —  出处与授权
+================================
+花纹底形 (fleur-de-lis 路径) 取自  game-icons:fleur-de-lys  by Delapouite
+  https://game-icons.net    许可: CC BY 3.0
+  https://creativecommons.org/licenses/by/3.0/
+
+本图标的改动: 六边形内接构图 / 圆角卡片 / 花纹横向宽高比 x0.86 /
+下缝接合 (束带与脚颈之间加凹弧桥接) / 多尺寸 ico 打包
+
+CC BY 3.0 要求署名随作品一起出现。此文件随应用打包分发，不得删除。

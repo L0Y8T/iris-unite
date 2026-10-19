@@ -1,0 +1,145 @@
+/* Surfaces, type and geometry. Palette derived from DeepSeek Desktop's
+   design-platform tokens (cool "bluish" neutrals, alpha hairlines, near-black
+   brand, blue reserved for links and active state).
+   Layer order: base, scrim, drawer, popover, toast. */
+:root {
+  color-scheme: light;
+
+  /* Type */
+  /* 字体栈按平台回退：mac 有 PingFang、Windows 有雅黑；Linux 通常只有 Noto CJK / 思源黑体，
+     不写进来就会落到默认的衬线或无 CJK 字形，界面直接一屏豆腐块。 */
+  --font: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', 'Noto Sans CJK SC', 'Noto Sans SC', 'Source Han Sans SC', 'WenQuanYi Micro Hei', 'Helvetica Neue', Helvetica, Arial, sans-serif;
+  --mono: 'SF Mono', 'JetBrains Mono', 'Fira Code', Consolas, 'Liberation Mono', Menlo, Courier, 'Microsoft YaHei', monospace;
+  --text-xs: 12px;
+  --text-sm: 13px;
+  --text-base: 14px;
+  --line-body: 24px;
+
+  /* Labels. Kept within the DeepSeek bluish neutral ramp but darkened to clear
+     WCAG AA on the darkest common surface (--selected #ebeef2): #61666b 4.9:1,
+     #63686e 4.8:1, #666b71 4.6:1. Hierarchy is carried by size and weight, the
+     way DeepSeek Desktop carries its caption tier. */
+  --ink: #0f1115;
+  --secondary: #61666b;
+  --muted: #63686e;
+  --caption: #666b71;
+  --dimmed: #e1e5ee;
+
+  /* Surfaces */
+  --canvas: #fff;
+  --surface: #fff;
+  --sidebar: #f9fafb;
+  --module: #f5f6f7;
+  --soft: #f1f3f5;
+  --hover: #0000000f;
+  --selected: #ebeef2;
+  --overlay: #e9ecf2;
+
+  /* Hairlines and borders */
+  --line: #0000001a;
+  --line-soft: #0000000a;
+  --line-strong: #0000001f;
+  --line-bold: #00000029;
+  --control-line: #00000029;
+  --strong-line: #81858c;
+
+  /* Brand and accent */
+  --brand: #0f1115;
+  --brand-hover: #43454a;
+  --on-brand: #fff;
+  --accent: #2563eb;
+  --accent-strong: #4176e6;
+  --accent-soft: #edf3fe;
+  --bubble: #edf3fe;
+  --bubble-highlight: #d3e2ff;
+
+  /* Markdown and code */
+  --code-block: #f9fafb;
+  --code-banner: #f9fafb;
+  --inline-code: #ebeef2;
+  --tag: #f1f3f5;
+
+  /* States */
+  --state-success: #22c55e;
+  /* 文字用绿：22c55e 在白底只有 2:1，不能直接写文字 */
+  --state-success-text: #146c33;
+  --state-error: #e5484d;
+
+  /* Elevation */
+  --elevation-stroke: 0 0 0 .5px #00000029;
+  --elevation-panel: var(--elevation-stroke), 0 3px 8px #00000008, 0 0 16px #00000005;
+  --elevation-prominent: var(--elevation-stroke), 0 3px 8px #0000000a, 0 0 20px #0000000d;
+  --shadow: var(--elevation-panel);
+
+  /* Motion */
+  --ease: cubic-bezier(.4, 0, .2, 1);
+  --duration: .2s;
+
+  /* Radii */
+  --radius-xs: 6px;
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --radius-xl: 20px;
+  --radius-bubble: 22px;
+  --radius-pill: 999px;
+
+  /* Layout */
+  --sidebar-width: 272px;
+  --reading-width: 860px;
+  --layer-scrim: 9;
+  --layer-sidebar: 10;
+  --layer-popover: 20;
+  --layer-toast: 30;
+}
+
+:root[data-theme='dark'] {
+  color-scheme: dark;
+
+  --ink: #f9fafb;
+  --secondary: #cfd3d6;
+  /* Dark tiers must clear AA on --selected #43454a and --code-banner #2c2c2e,
+     so they sit lighter than DeepSeek Desktop's dark tertiary #adb2b8. */
+  --muted: #b4b9bf;
+  --caption: #b0b5bb;
+  /* 暗色下文字用的绿：22c55e 在 #232324 上只有 3:1 */
+  --state-success-text: #86efac;
+  --dimmed: #43454a;
+
+  --canvas: #151517;
+  --surface: #1b1b1c;
+  --sidebar: #1b1b1c;
+  --module: #2c2c2e;
+  --soft: #232324;
+  --hover: #ffffff14;
+  --selected: #43454a;
+  --overlay: #353638;
+
+  --line: #ffffff1f;
+  --line-soft: #ffffff0f;
+  --line-strong: #ffffff29;
+  --line-bold: #ffffff33;
+  --control-line: #ffffff33;
+  --strong-line: #adb2b8;
+
+  --brand: #f9fafb;
+  --brand-hover: #cfd3d6;
+  --on-brand: #151517;
+  --accent: #679efe;
+  --accent-strong: #5686fe;
+  --accent-soft: #34415b;
+  --bubble: #2c2c2e;
+  --bubble-highlight: #43454a;
+
+  --code-block: #1b1b1c;
+  --code-banner: #2c2c2e;
+  --inline-code: #2c2c2e;
+  --tag: #2c2c2e;
+
+  --elevation-stroke: 0 0 0 .5px #ffffff33;
+  --elevation-panel: var(--elevation-stroke), 0 3px 8px #0000001f, 0 0 16px #00000014;
+  --elevation-prominent: var(--elevation-stroke), 0 3px 8px #00000029, 0 0 20px #00000033;
+  --shadow: var(--elevation-panel);
+}
+
+:root.theme-switching *, :root.theme-switching *::before, :root.theme-switching *::after { transition: none!important; }
