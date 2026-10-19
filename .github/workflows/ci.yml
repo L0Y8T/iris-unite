@@ -6,6 +6,8 @@ name: CI
 on:
   push:
     branches: [main]
+    # 没有这一行，打 tag 不会触发任何运行；打包任务的条件却是 refs/tags/，于是永远轮不到。
+    tags: ['v*']
   pull_request:
   workflow_dispatch:
 

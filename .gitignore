@@ -16,6 +16,10 @@ artifacts/
 Iris-data/
 Duet-data/
 
+# 发布说明草稿：只在创建 Release 时用，不进仓库
+release-notes-*.md
+.release-notes*
+
 # 日志与临时
 .npm-cache/
 *.log
