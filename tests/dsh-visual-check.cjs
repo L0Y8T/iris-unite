@@ -9,7 +9,7 @@ const fs = require('node:fs/promises');
 const assert = require('node:assert/strict');
 
 const root = path.resolve(__dirname, '..');
-const electron = path.join(root, 'node_modules/electron/dist/electron.exe');
+const electron = require('./lib/electron-binary.cjs').binary;
 const packagedExe = process.env.DSH_CHECK_EXE || '';
 const artifacts = path.join(root, 'artifacts');
 const delay = ms => new Promise(r => setTimeout(r, ms));

@@ -5,7 +5,7 @@ const path = require('node:path');
 const assert = require('node:assert/strict');
 const delay = ms => new Promise(r => setTimeout(r, ms));
 const root = path.resolve(__dirname, '..');
-const electron = path.join(root, 'node_modules/electron/dist/electron.exe');
+const electron = require('./lib/electron-binary.cjs').binary;
 
 async function freePort() {
   const s = net.createServer();

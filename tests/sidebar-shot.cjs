@@ -6,7 +6,7 @@ const os = require('node:os');
 const path = require('node:path');
 
 const root = path.resolve('.');
-const electron = path.join(root, 'node_modules/electron/dist/electron.exe');
+const electron = require('./lib/electron-binary.cjs').binary;
 const delay = ms => new Promise(r => setTimeout(r, ms));
 
 async function freePort() {
