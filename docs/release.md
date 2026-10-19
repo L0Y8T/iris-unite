@@ -4,7 +4,10 @@
 
 > 当前状态：仓库还没有 `git`（`.git` 不存在）。第 0 步是初始化并推到 GitHub，否则后面的 CI 与分发都无从谈起。
 
-## 0. 首次准备（只做一次）
+## 0. 首次准备（已完成，留档备查）
+
+本地已经初始化并提交好了（`main` 分支，首个提交 `chore: 初始化仓库（Iris Unite 0.6.0）`，120 个文件）。
+之后要重建仓库时照这个来：
 
 ```bash
 git init
@@ -12,9 +15,39 @@ git add -A
 git status          # ← 必看：下面这些路径不允许出现
 ```
 
-`git status` 里**不能出现**：`settings.json`、`conversations.json`、`knowledge/`、`.local-data/`、`.test-data/`、`.verification-profile/`、`build/`、`release/`、`dist/`、`artifacts/`。出现了就停下，先修 `.gitignore`——这些里面有真实的对话、资料库与加密后的密钥。
+`git status` 里**不能出现**：`settings.json`、`conversations.json`、`knowledge/`、`.local-data/`、`.test-data/`、`.verification-profile/`、`build/`、`release/`、`dist/`、`artifacts/`、`docs/backups/`。出现了就停下，先修 `.gitignore`——这些里面有真实的对话、资料库与加密后的密钥。
 
-然后：仓库设为 public → 推送 → 在 GitHub 上确认 Actions 页签出现了 `CI` workflow。
+提交前跑一遍扫描（凭据、本机用户目录、私钥、第三方项目名），确认 `findings` 与 `forbidden` 都是空的：
+
+```bash
+git diff --cached --name-only   # 逐个过一眼，120 个文件不该有陌生面孔
+```
+
+## 0.1 在 GitHub 上建仓库
+
+**不要**勾选「Add a README / .gitignore / license」——仓库必须是空的，否则第一次 push 会被拒绝。
+
+- 网页：github.com/new → 仓库名 `iris-unite` → Public → **什么都不勾** → Create
+- 或者装 GitHub CLI 后一条命令：`gh repo create iris-unite --public --source=. --remote=origin`
+
+```bash
+git remote add origin https://github.com/<你的用户名>/iris-unite.git
+git push -u origin main
+```
+
+### 推上去之后立刻做三件事
+
+1. **确认二进制与大目录没上去**：仓库首页应该只有 120 个文件，看不到 `build/`、`release/`、`dist/`、`node_modules/`。
+2. **确认 Actions 跑起来了**：Actions 页签应出现 `CI`，三个平台的任务都该绿。第一次跑会装依赖（约 2 分钟）并跑 210 项单测。
+3. **补 `package.json` 的仓库字段**（现在没有，因为地址还不存在）：
+
+```json
+"repository": { "type": "git", "url": "https://github.com/<你的用户名>/iris-unite.git" },
+"homepage": "https://github.com/<你的用户名>/iris-unite#readme",
+"bugs": { "url": "https://github.com/<你的用户名>/iris-unite/issues" }
+```
+
+再补仓库描述与 topics（`electron`、`research`、`llm`、`reproducibility`、`citation-verification`），这些直接影响能不能被搜到。
 
 ## 1. 改版本号（两处，必须同时改）
 
