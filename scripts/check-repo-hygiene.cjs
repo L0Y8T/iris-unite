@@ -19,13 +19,19 @@ const ROOT_DIRS = new Set(['.github', 'assets', 'core', 'docs', 'renderer', 'scr
 /* 调试/一次性脚本的命名特征：命中了就必须在 tests/ 或 scripts/ 里，且要有正经用途。 */
 const TEMP_SCRIPT = /^(patch-|fix-|audit-|bug-|check-|verify-|inspect-|peek|sanitize-|merge-|promote-|remove-|github-|ci[0-9-]|ci-log|ci-|tmp|temp)/i;
 const SECRET_FILES = /\.(p12|pfx|pem|cer|crt|key|keystore|jks|mobileprovision|provisionprofile)$/i;
+/* 真凭据形态：任何文本文件里出现都算问题。 */
 const SECRET_CONTENT = [
   [/BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY/, '私钥内容'],
   [/BEGIN CERTIFICATE/, '证书内容'],
   [/ghp_[A-Za-z0-9]{16,}/, 'GitHub token'],
-  [/sk-[A-Za-z0-9]{20,}/, 'API Key'],
-  [/git credential fill/, '读取本机凭据的代码（调试脚本不该进仓库）']
+  [/sk-[A-Za-z0-9]{20,}/, 'API Key']
 ];
+
+/* 只在代码文件里查：文档里提到某个调用名是正常的，代码里出现才是调试脚本残留。 */
+const CODE_ONLY_RULES = [
+  [/git credential fill/, '读取本机凭据的调用']
+];
+const CODE_FILE = /\.(cjs|js|mjs|py)$/i;
 
 /* 扫到自己会必然误报：这个文件里写着要检测的模式字符串（BEGIN CERTIFICATE、git credential fill…）。
    本地能通过，是因为当时它还是个未追踪文件、不在 git ls-files 里；一旦提交，CI 上就会命中自己。 */
@@ -67,6 +73,12 @@ for (const file of files) {
   for (const [re, why] of SECRET_CONTENT) {
     const hit = re.exec(text);
     if (hit) problems.push(`${file}: ${why} → ${JSON.stringify(hit[0].slice(0, 40))}`);
+  }
+  if (CODE_FILE.test(file)) {
+    for (const [re, why] of CODE_ONLY_RULES) {
+      const hit = re.exec(text);
+      if (hit) problems.push(`${file}: ${why} → ${JSON.stringify(hit[0].slice(0, 40))}`);
+    }
   }
 }
 
