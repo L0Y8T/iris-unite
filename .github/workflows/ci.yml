@@ -34,6 +34,10 @@ jobs:
           node-version: '22'
           cache: npm
 
+      # 不依赖任何包：挡住「临时脚本被顺手提交」这类事故（根目录白名单 + 证书/凭据扫描）
+      - name: 仓库卫生检查
+        run: node scripts/check-repo-hygiene.cjs
+
       - name: 安装依赖
         run: npm ci
 
