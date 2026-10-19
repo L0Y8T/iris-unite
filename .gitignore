@@ -20,6 +20,9 @@ Duet-data/
 release-notes-*.md
 .release-notes*
 
+# 从 CI 下载回来的安装包（体积大，且可随时重新下载）
+.release-artifacts/
+
 # 日志与临时
 .npm-cache/
 *.log

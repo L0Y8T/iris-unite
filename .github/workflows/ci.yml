@@ -82,13 +82,20 @@ jobs:
         include:
           - os: windows-latest
             target: --win
+            # nsis 安装器 + portable 免安装版
             artifact: dist/*.exe
           - os: macos-latest
             target: --mac
-            artifact: dist/*.dmg
+            # dmg 装应用；zip 是 electron-builder 给自动更新用的包，也方便被 Gatekeeper 拦时手动解压
+            artifact: |
+              dist/*.dmg
+              dist/*.zip
           - os: ubuntu-latest
             target: --linux
-            artifact: dist/*.AppImage
+            # AppImage 免安装；deb 是发行版正常安装路径（菜单项、依赖都由包管理器处理）
+            artifact: |
+              dist/*.AppImage
+              dist/*.deb
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
