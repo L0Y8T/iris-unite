@@ -157,13 +157,16 @@ Get-FileHash 'build/IrisUnite-win32-x64/resources/app.asar','release/IrisUnite-w
 | `build` 与 `release` 的 `resources/app.asar` | 哈希一致 |
 | `release/IrisUnite-win32-x64/Iris-data/conversations.json` | 哈希**不变**（这是真实用户数据，任何一次发版都不该改动它） |
 
-## 5. 发布说明里必须写清的三件事
+## 5. 发布说明里必须写清的四件事
 
 缺一件就会有人装不上，或者以为软件坏了：
 
 1. **平台状态**：哪一栏是真机验证、哪一栏只是「代码已适配」。照抄 README「平台支持」表，别改写。
 2. **未签名的处理方式**：Windows 点「更多信息 → 仍要运行」；macOS 去「系统设置 → 隐私与安全性 → 仍要打开」；Linux `chmod +x`。**并且说明** Win11 智能应用控制环境与受管设备可能直接跑不了。
 3. **哪里要花钱**：模型调用按你填的单价估算；跑实验会在本机起 Python 进程。同时说明「不需要任何 API Key 也能检索文献」——很多人以为装完必须配密钥才能用。
+4. **每个下载链接前面写清适配的系统版本**：Windows 10+（64 位）、macOS 13 Ventura+、Linux 64 位。下限照 Electron 官方支持范围写（[breaking-changes](https://www.electronjs.org/docs/latest/breaking-changes) 里有 macOS 12 停止支持、Electron 23 起只支持 Windows 10+ 两条），**不要凭印象加版本号**；Linux 不写发行版版本号，只写 64 位与需要的运行库。
+
+表格里也只用链接名，不要另写一段解释本产品「不是 Android 应用」之类的常识——读者点进 Releases 一眼就知道下的是什么。
 
 ## 6. 发布
 

@@ -16,17 +16,20 @@
 
 ## 下载
 
-安装包在 [Releases](https://github.com/L0Y8T/iris-unite/releases/latest)，选对应平台的：
+安装包在 [Releases](https://github.com/L0Y8T/iris-unite/releases/latest)。每行前面写的是这个包适配的系统版本：
 
-| 平台 | 文件 |
-| --- | --- |
-| Windows x64 | `iris-unite-0.6.0-win-x64-setup.exe`（NSIS 安装器，可选目录）／ `iris-unite-0.6.0-win-x64-portable.exe`（免安装） |
-| macOS（Apple Silicon） | `iris-unite-0.6.0-mac-arm64.dmg` |
-| macOS（Intel） | `iris-unite-0.6.0-mac-x64.dmg` |
-| Linux x64 | `iris-unite-0.6.0-linux-x86_64.AppImage`（需 `chmod +x`）／ `iris-unite_0.6.0_amd64.deb` |
+| 适配系统版本 | 下载 | 说明 |
+| --- | --- | --- |
+| Windows 10 或更高（64 位） | [`iris-unite-0.6.0-win-x64-setup.exe`](https://github.com/L0Y8T/iris-unite/releases/download/v0.6.0/iris-unite-0.6.0-win-x64-setup.exe) | NSIS 安装器，可选安装目录 |
+| Windows 10 或更高（64 位） | [`iris-unite-0.6.0-win-x64-portable.exe`](https://github.com/L0Y8T/iris-unite/releases/download/v0.6.0/iris-unite-0.6.0-win-x64-portable.exe) | 免安装，双击即用 |
+| macOS 13 Ventura 或更高（Apple Silicon） | [`iris-unite-0.6.0-mac-arm64.dmg`](https://github.com/L0Y8T/iris-unite/releases/download/v0.6.0/iris-unite-0.6.0-mac-arm64.dmg) | M 系列芯片 |
+| macOS 13 Ventura 或更高（Intel） | [`iris-unite-0.6.0-mac-x64.dmg`](https://github.com/L0Y8T/iris-unite/releases/download/v0.6.0/iris-unite-0.6.0-mac-x64.dmg) | Intel 芯片 |
+| 64 位 Linux（需 libgtk-3 / libsecret 等运行库） | [`iris-unite-0.6.0-linux-x86_64.AppImage`](https://github.com/L0Y8T/iris-unite/releases/download/v0.6.0/iris-unite-0.6.0-linux-x86_64.AppImage) | 免安装，需先 `chmod +x` |
+| 64 位 Debian / Ubuntu | [`iris-unite_0.6.0_amd64.deb`](https://github.com/L0Y8T/iris-unite/releases/download/v0.6.0/iris-unite_0.6.0_amd64.deb) | 装完有菜单项，依赖由包管理器检查 |
 
-**这不是 Android 应用**：APK 是安卓安装包，本项目是 Electron 桌面程序，产物是 exe / dmg / AppImage / deb。
 产物未签名，首次安装会被系统拦一次——点哪个按钮见下方[「未签名产物的系统拦截」](#未签名产物的系统拦截)。
+
+Windows 与 macOS 的下限来自 Electron 44 自身的支持范围：`macOS 12 已不再支持，需要 Ventura 或更高`、`Electron 23 起只支持 Windows 10+`（见 [Electron breaking changes](https://www.electronjs.org/docs/latest/breaking-changes)）。Linux 这一栏没写发行版版本号：Electron 只要求 64 位，能不能装上取决于发行版有没有 libgtk-3 / libsecret 这些运行库，deb 会在安装时替你检查。
 
 ## 它解决什么问题
 
@@ -90,7 +93,7 @@
 
 实测（本机 32 核 / RTX 4090 Laptop）：digits 数据集随机森林，测试集准确率 **0.9639**、macro-F1 **0.9634**，训练 0.518 秒；从建环境到出结果共 35.2 秒。门禁实测：真实数字 `11.200641 [E1]` 通过并绑定 1 处，编造数字 `999.999999 [E1]` 被标为未核对。
 
-
+## 任意模型通道
 
 设置 →「其他 AI 模型」里内置服务商预设，也可以连任何遵循 **OpenAI Chat Completions** 或 **Anthropic Messages** 的服务：
 
@@ -160,7 +163,7 @@ OpenAI、Anthropic、Google Gemini、DeepSeek、OpenRouter、Moonshot、智谱 G
 - 没填单价时显示「未设单价」，不给猜出来的数字；
 - 一轮里用到多个通道时，用量按通道分开记账，货币不同分别合计（不把人民币和美元加在一起），没设单价的通道单独点名。
 
-## 运行要求
+## 不绑定任何一家厂商
 
 只对一个第三方模型也完全可用：装一个 API Key、加一个连接，科研流程照样跑，不依赖 Codex。
 
@@ -251,7 +254,7 @@ npm run test:all -- --only=retry,exec-gate
 ```powershell
 node tests/dsh-visual-check.cjs     # 界面与可访问性（逐界面截图 + 明暗 axe）
 node tests/retry-check.cjs          # 重新生成与旧答案保留（本地假模型服务）
-node tests/research-run-check.cjs   # 科研 草稿→核验→发布
+node tests/research-run-check.cjs   # 科研草稿→核验→发布
 node tests/research-ui-check.cjs    # 档位选择与计划预览
 node tests/plan-ipc-check.cjs       # 计划/档位接口
 node tests/exec-ui-check.cjs        # 实验面板（会真跑一次 Python）
@@ -297,7 +300,6 @@ npm run test:frontend               # 应用内建前端验收
 - [科研流程架构图](docs/research-architecture.svg)（由 `npm run diagram` 从代码生成）
 - [发版清单](docs/release.md)：改哪两处版本号、跑哪些检查、三平台产物怎么出、发布说明必须写什么
 - [跨平台改造方案](docs/portability-plan.md)：三平台差异、决策结果与仍未做的部分
-- [验收清单](docs/verification.md)：每一项检查证明什么、花不花钱、跑多久
-- [一键验收](npm run test:all)
+- [验收清单](docs/verification.md)：每一项检查证明什么、花不花钱、跑多久（一键跑就是 `npm run test:all`）
 - [0.6 变更说明](docs/CHANGELOG-0.6.md)
 - [0.5 完整交接文档](docs/handoff-0.5.md)（历史版本，结构与实现描述对应 0.5.0）
