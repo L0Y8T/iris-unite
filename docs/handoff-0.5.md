@@ -414,7 +414,7 @@ Codex 的文字任务禁止工具属于调用指令，同时配置 read-only 沙
 | assets/iris.ico | Windows 应用与快捷方式图标 |
 | assets/iris.png | 鸢尾花 PNG 资源副本 |
 | assets/iris.svg、iris-dark.svg | 界面的浅色与深色品牌图标 |
-| assets/duet.ico、duet.png | 旧品牌遗留素材，当前品牌入口不使用 |
+| assets/duet.ico、duet.png | 旧品牌遗留素材，0.6.0 公开发布前已删除 |
 
 iris-ui.js 在 app.js 前加载，用于先定义辅助函数；表单绑定延迟到 DOMContentLoaded，避免访问尚未初始化的全局辅助变量。修改脚本顺序或把初始化移回顶层时应检查启动错误。
 
