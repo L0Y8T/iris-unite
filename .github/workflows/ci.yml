@@ -72,6 +72,10 @@ jobs:
     needs: test
     if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/')
     runs-on: ${{ matrix.os }}
+    env:
+      # 与 test job 同理：Linux runner 的 chrome-sandbox 权限不对，
+      # electron-builder 内部会拉起 electron 取版本信息，没这个变量会 FATAL 退出。
+      ELECTRON_DISABLE_SANDBOX: '1'
     strategy:
       fail-fast: false
       matrix:
@@ -93,8 +97,6 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run prepare:ui
-      - name: 重新生成图标（icns / png 必须与源图一致）
-        run: npm run icons
       # 未签名：Windows 会弹 SmartScreen、macOS 会被 Gatekeeper 拦一次。
       # 消除警告需要购买证书，见 README 的「平台支持」一节。
       - name: 打包
