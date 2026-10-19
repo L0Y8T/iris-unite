@@ -10,8 +10,28 @@ exports.run = async (win, root, store) => {
   const capture = async name => {
     await js('new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)))');
     await delay(250);
-    // 0.6.0 的暗色画布是 #151517（带一点蓝），不是中性灰，所以按通道逐个比，不能只比红通道。
-    const samples = await js('(()=>{const rgb=e=>getComputedStyle(e).backgroundColor.match(/\\d+/g).slice(0,3).map(Number);const modal=Array.from(document.querySelectorAll("dialog[open]")).at(-1);if(modal){const r=modal.getBoundingClientRect();return [{x:r.left+16,y:r.top+Math.min(80,r.height/2),rgb:rgb(modal),selector:modal.id}]}const samples=[{x:innerWidth-20,y:160,rgb:rgb(document.querySelector(".main"))}];for(const selector of [".new-chat",".quick-prompts button"]){const e=document.querySelector(selector);if(!e||getComputedStyle(e).display==="none"||e.getBoundingClientRect().width===0)continue;const r=e.getBoundingClientRect();samples.push({x:r.right-8,y:r.top+r.height/2,rgb:rgb(e),selector})}return samples})()');
+    /* 0.6.0 的暗色画布是 #151517（带一点蓝），不是中性灰，所以按通道逐个比，不能只比红通道。
+       取样点必须确认真的落在那个元素上：早先取「右边缘 -8px」，在窄窗口或内容需要滚动时
+       会压到边框/圆角甚至画布上，量出画布色再判定「没重绘」——那是取样的错，不是界面的错。
+       现在取元素中心，并用 elementFromPoint 确认命中；落不到元素上就跳过这一点。 */
+    const samples = await js(`(()=>{
+      const rgb = e => getComputedStyle(e).backgroundColor.match(/\\d+/g).slice(0, 3).map(Number);
+      const modal = Array.from(document.querySelectorAll('dialog[open]')).at(-1);
+      if (modal) { const r = modal.getBoundingClientRect(); return [{ x: r.left + 16, y: r.top + Math.min(80, r.height / 2), rgb: rgb(modal), selector: modal.id }]; }
+      const samples = [{ x: innerWidth - 20, y: 160, rgb: rgb(document.querySelector('.main')), selector: '.main' }];
+      for (const selector of ['.new-chat', '.quick-prompts button']) {
+        const e = document.querySelector(selector);
+        if (!e || getComputedStyle(e).display === 'none') continue;
+        const r = e.getBoundingClientRect();
+        if (r.width < 4 || r.height < 4) continue;
+        const x = r.left + r.width / 2, y = r.top + r.height / 2;
+        if (x < 1 || y < 1 || x > innerWidth - 2 || y > innerHeight - 2) continue;
+        const hit = document.elementFromPoint(x, y);
+        if (!hit || !(hit === e || e.contains(hit))) continue;
+        samples.push({ x, y, rgb: rgb(e), selector });
+      }
+      return samples;
+    })()`);
     let screenshot;
     for (let attempt = 0; attempt < 30; attempt++) {
       screenshot = await win.webContents.capturePage(undefined, { stayHidden: true, stayAwake: true });
