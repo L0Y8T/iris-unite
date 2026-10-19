@@ -40,6 +40,9 @@ exports.run = async (win, root, store) => {
     store.data.workspaces = seed;
     store.save();
   }
+  /* 写盘之后要让界面重新拉一次：页面初始化时已经读过一遍，state.workspaces 还是旧的。
+     少了这一步，干净环境里工作区页仍然只有一个卡片，这条断言就会超时。 */
+  await js('(async()=>{const data=await window.duet.init();applyCatalog(data);return true})()');
   await until('!!document.querySelector(".welcome") && state.historyLoading === false');
   assert.deepEqual(await js('window.__irisErrors'), []);
   await js('window.__frontendErrors=[];window.addEventListener("error",e=>window.__frontendErrors.push(e.message));true');
