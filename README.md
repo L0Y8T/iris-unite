@@ -212,7 +212,9 @@ macOS 15 之后这是主路径；老的「右键点图标 → 打开」不一定
 ## 开发与构建
 
 ```bash
-npm ci
+git clone https://github.com/L0Y8T/iris-unite.git
+cd iris-unite
+npm ci                   # 装依赖（Electron 会被下载，约 200 MB）
 npm test                 # 离线单测，不花钱
 npm run test:frontend    # 界面与可访问性回归（Linux 需要 xvfb-run）
 
