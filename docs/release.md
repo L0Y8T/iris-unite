@@ -57,6 +57,32 @@ git push -u origin main
 
 两处不同步的话，安装包名字是 0.7.0、界面还写着 0.6。改完顺手把 `docs/CHANGELOG-<版本>.md` 建起来（或续写现有那份）。
 
+## 1.5 仓库卫生检查
+
+```bash
+node scripts/check-repo-hygiene.cjs
+```
+
+挡住的是「临时脚本被 `git add -A` 顺手带上」这类事故——这不是假设：抓 CI 日志用的 `ci-log.cjs` 就这样进过一次仓库，
+而且它还会读本机 git 凭据。检查项：
+
+- 根目录只允许白名单文件（`main.cjs`、`preload.cjs`、`package.json`、`package-lock.json`、`README.md`、`LICENSE`、`DESIGN.md`、`.gitignore`、`.gitattributes`）与白名单目录；
+- 根目录出现 `patch-/fix-/audit-/ci-` 这类调试脚本名前缀即报错；
+- 证书与密钥文件（`.p12/.pfx/.pem/.cer/.crt/.key/.keystore/.mobileprovision`）一律报错；
+- 内容扫描：私钥块、证书块、`ghp_` / `sk-` 开头的凭据、`git credential fill` 这类读取本机凭据的代码。
+
+CI 的每个平台任务都会先跑这一步（不依赖 `npm ci`，两秒内结束），`npm run test:all` 里也有。
+
+### 发布后验证「别人 clone 能用」
+
+```bash
+node scripts/verify-fresh-clone.cjs
+```
+
+全新克隆到临时目录 → `npm ci` → 单元测试 → 平台检查 → 文件完整性。约 2 分钟（大头是下载 Electron）。
+这一步不能进 CI 常规流程（太慢），但每次发布后值得手动跑一次——它验证的是「别人拿到手能不能用」，
+而不是「我这台机器还能不能跑」。
+
 ## 2. 跑检查
 
 分两批：先跑不花钱的，全绿再跑花钱的。

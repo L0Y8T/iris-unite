@@ -27,6 +27,10 @@ const SECRET_CONTENT = [
   [/git credential fill/, '读取本机凭据的代码（调试脚本不该进仓库）']
 ];
 
+/* 扫到自己会必然误报：这个文件里写着要检测的模式字符串（BEGIN CERTIFICATE、git credential fill…）。
+   本地能通过，是因为当时它还是个未追踪文件、不在 git ls-files 里；一旦提交，CI 上就会命中自己。 */
+const SELF_FILE = 'scripts/check-repo-hygiene.cjs';
+
 const files = execFileSync('git', ['ls-files'], { encoding: 'utf8', cwd: path.resolve(__dirname, '..') })
   .split('\n').map(line => line.trim()).filter(Boolean);
 
@@ -54,6 +58,7 @@ for (const file of files) {
 }
 
 for (const file of files) {
+  if (file === SELF_FILE) continue;
   if (!/\.(cjs|js|mjs|json|md|yml|yaml|txt|html|css|py)$/i.test(file)) continue;
   /* 已被 git 追踪但工作区里删掉的文件（删除还没提交时）读不到，跳过内容扫描即可。 */
   const absolute = path.join(__dirname, '..', file);
