@@ -138,3 +138,17 @@ CI 会自动跑三平台测试；`package` 任务产出三个平台的安装包�
 - 在 README 的「平台支持」表里更新状态：如果有人在 mac / Linux 上真机跑通了，把「未真机验证」改掉，并注明是谁、什么版本、什么问题。
 - 收到「打不开」的反馈时，先问三件事：什么系统版本、有没有出现拦截提示、是不是 Win11 智能应用控制。这三个能覆盖绝大多数安装失败。
 - 新版本发布后，旧版本的 SmartScreen 信誉**不会继承**（未签名的情况下每一版都从零开始）。如果这种反馈变成常态，就是该上 Artifact Signing 的信号了。
+
+## 8. 要不要买签名证书
+
+只在这里讨论，不放在 README 首页——读者需要知道「装了会弹警告、怎么点过去」，不需要知道采购决策。
+
+| 路线 | 成本 | 用户看到什么 |
+| --- | --- | --- |
+| 不签名（当前） | 0 | 每个平台首次安装批准一次；Win11 智能应用控制环境与受管设备可能完全跑不了 |
+| Windows Artifact Signing（原 Trusted Signing） | $9.99/月起，需身份验证 | 显示已验证的发布者名，但**首次下载仍可能警告**——SmartScreen 按下载量累积信誉，EV 证书已不再自动绕过 |
+| Apple Developer Program + 公证 | $99/年，公证必须在 macOS 上做 | macOS 双击即开、无警告 |
+| Microsoft Store（Windows） | 0，需商店账号与审核 | 无任何警告（微软重签名） |
+
+配置位已留好：`package.json` 的 `build.mac.identity`（填证书名）与 `build.win`（`certificateSubjectName` / `azureSignOptions`）。
+证书与私钥**绝不能进仓库**；CI 里用仓库 Secret 注入（当前未配置）。
