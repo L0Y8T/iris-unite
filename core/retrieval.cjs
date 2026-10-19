@@ -114,12 +114,29 @@ async function requestText(url, source, context) {
   context.queries.push({ source, query: context.query, url });
   const controller = new AbortController();
   let timedOut = false;
-  const timer = setTimeout(() => { timedOut = true; controller.abort(); }, context.timeoutMs);
-  if (typeof timer.unref === 'function') timer.unref();
+  /* 超时用「竞速」而不是只靠 abort 信号：
+     abort 只是通知，真正打断取决于 fetch 实现是否响应 signal。第三方适配器、自造 mock、
+     以及某些运行时都可能不响应——那样 await 就永久挂住。这里让定时器直接赢得竞速，
+     保证无论 fetch 是否配合，这一路检索都按时收口。 */
+  let wakeTimeout;
+  const timeoutGuard = new Promise((_, reject) => { wakeTimeout = reject; });
+  const timer = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+    wakeTimeout(new Error(`请求超时（${context.timeoutMs}ms）`));
+  }, context.timeoutMs);
+  /* 这里刻意不 unref：
+     超时定时器必须能维持事件循环到它触发为止。unref 之后，如果宿主环境此刻没有别的待办
+     （测试进程就是这种情况），Node 会认为事件循环已空，定时器不触发、await 永久挂住，
+     表现为「Promise resolution is still pending」。
+     代价可以忽略：请求一结束就 clearTimeout，不会拖慢进程退出。 */
   // 外部取消（用户点了停止）和本源的超时都要能打断请求，两个信号合并成一个。
   const signal = context.signal ? AbortSignal.any([context.signal, controller.signal]) : controller.signal;
   try {
-    const response = await context.fetchImpl(url, { signal, headers: { accept: 'application/json, application/atom+xml, application/xml;q=0.9, */*;q=0.8', 'user-agent': USER_AGENT } });
+    const response = await Promise.race([
+      context.fetchImpl(url, { signal, headers: { accept: 'application/json, application/atom+xml, application/xml;q=0.9, */*;q=0.8', 'user-agent': USER_AGENT } }),
+      timeoutGuard
+    ]);
     if (response && response.ok === false) throw new Error(`接口返回 HTTP ${response.status || '未知状态'}`);
     if (!response) throw new Error('接口没有返回响应');
     if (typeof response.text === 'function') return await response.text();

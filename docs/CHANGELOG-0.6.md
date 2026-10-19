@@ -425,6 +425,29 @@
 
 整仓扫描结果（84 个 JS 文件）：语法 0 错、IPC 通道 43 对 43 一致、`$('#id')` 引用与动态生成的都核对过、无残留调试输出、无跨平台大小写冲突。
 
+### 19.7 CI 第一次跑就抓到的真 bug
+
+仓库推上去、三平台 CI 第一次跑，**三个平台的单元测试全红**——而这台机器上 `npm test` 是 210/210 通过。
+
+失败现象：从第 200 个测试开始报 `Promise resolution is still pending but the event loop has already resolved`，
+`failureType: cancelledByParent`，后面十几条连带取消。
+
+**根因**（`core/retrieval.cjs` 的 `requestText`）：超时定时器写了 `timer.unref()`。unref 的定时器不维持事件循环——
+在 Electron 主进程里很安全（IPC 与窗口一直有活），但在测试进程里，如果此刻没有别的待办，Node 判定事件循环已空，
+定时器不触发，`await` 就永久挂住，测试运行器看到「promise 未 settle 而循环已空」直接判失败。
+
+本地为什么过：开发机是 Node 24（对 unref 定时器 + pending promise 的判定更宽松），CI 是 Node 22。**代码本身与平台无关，是 Node 版本差异。**
+
+修了三处：
+
+1. **超时改成竞速兜底**：`Promise.race([fetch, timeoutGuard])`，定时器直接赢得这一路。
+   之前只靠 `AbortController` 通知，真正能否打断取决于 fetch 实现是否响应 signal——第三方适配器、自造 mock、某些运行时都可能不响应。
+2. **去掉 `timer.unref()`**：超时定时器必须能维持事件循环到触发为止。代价可忽略——请求一结束就 `clearTimeout`。
+3. **测试的 mock 先查 `signal.aborted`**：真实 fetch 在信号已中止时会立刻 reject，mock 也必须这样，否则信号在注册监听前中止就会永久挂住。
+
+另外补了一条测试 `fetch 完全不响应 abort 时，检索仍按时收口`，直接覆盖这条路径。
+验证：Node 22（`npx node@22 --test`）与 Node 24 都是 211/211 通过——**两个版本都跑过**，不再靠「我这儿是好的」。
+
 ### 19.6 没做的（不是遗漏，是没条件做）
 
 - **便携 Python 内置**（方案 D1 的 B 案）：要随包分发 `python-build-standalone`（+30–50 MB），且三平台的解释器包在 Windows 上没法验证。当前走「用户自备 Python + 明确提示」。

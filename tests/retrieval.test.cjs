@@ -173,15 +173,31 @@ test('单源失败不影响其他源：抛错的源进 errors，正常的源照�
 });
 
 test('单源超时被隔离，不拖垮整次检索', async () => {
+  /* 真实 fetch 在信号已中止时会立刻 reject；mock 也必须这样，
+     否则信号在注册监听前就中止的情况会让 promise 永久挂住。 */
   const fetchImpl = (url, options) => new Promise((resolve, reject) => {
     if (!url.includes('api.openalex.org')) return resolve(jsonResponse(CROSSREF));
-    options.signal.addEventListener('abort', () => reject(Object.assign(new Error('aborted'), { name: 'AbortError' })), { once: true });
+    const abort = () => reject(Object.assign(new Error('aborted'), { name: 'AbortError' }));
+    if (options.signal.aborted) return abort();
+    options.signal.addEventListener('abort', abort, { once: true });
   });
   const result = await search({ query: 'deep learning', sources: ['openalex', 'crossref'], timeoutMs: 30, fetchImpl });
   assert.equal(result.records.length, 1);
   assert.equal(result.errors.length, 1);
   assert.equal(result.errors[0].source, 'openalex');
   assert.match(result.errors[0].message, /超时/);
+});
+
+test('fetch 完全不响应 abort 时，检索仍按时收口', async () => {
+  /* 有些适配器（或运行时）不理会 signal：这时不能靠 abort 来结束，
+     必须由超时竞速直接赢得这一路，否则整次检索会一直挂着。 */
+  const fetchImpl = () => new Promise(() => {});
+  const started = Date.now();
+  const result = await search({ query: 'deep learning', sources: ['openalex'], timeoutMs: 30, fetchImpl });
+  assert.equal(result.records.length, 0);
+  assert.equal(result.errors.length, 1);
+  assert.match(result.errors[0].message, /超时/);
+  assert.ok(Date.now() - started < 2000, '超时应当迅速结束，而不是等到测试超时');
 });
 
 test('DOI 归一化：小写、去 https://doi.org/ 前缀、非 DOI 返回 null', () => {
