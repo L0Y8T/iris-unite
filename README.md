@@ -14,6 +14,20 @@
 > Windows is the only platform verified on real hardware so far — see the platform matrix below before installing on
 > macOS or Linux.
 
+## 下载
+
+安装包在 [Releases](https://github.com/L0Y8T/iris-unite/releases/latest)，选对应平台的：
+
+| 平台 | 文件 |
+| --- | --- |
+| Windows x64 | `iris-unite-0.6.0-win-x64-setup.exe`（NSIS 安装器，可选目录）／ `iris-unite-0.6.0-win-x64-portable.exe`（免安装） |
+| macOS（Apple Silicon） | `iris-unite-0.6.0-mac-arm64.dmg` |
+| macOS（Intel） | `iris-unite-0.6.0-mac-x64.dmg` |
+| Linux x64 | `iris-unite-0.6.0-linux-x86_64.AppImage`（需 `chmod +x`）／ `iris-unite_0.6.0_amd64.deb` |
+
+**这不是 Android 应用**：APK 是安卓安装包，本项目是 Electron 桌面程序，产物是 exe / dmg / AppImage / deb。
+产物未签名，首次安装会被系统拦一次——点哪个按钮见下方[「未签名产物的系统拦截」](#未签名产物的系统拦截)。
+
 ## 它解决什么问题
 
 大模型写科研答案时最容易出的两个毛病是**编造文献**和**把假设写成事实**。光在提示词里写"不许编造"没用，因为没有任何东西去检查它。
@@ -226,9 +240,9 @@ npm start                          # 开发运行，数据在 .local-data
 npm run diagram                    # 重新生成科研架构图
 npm run package                    # 打包到 build\IrisUnite-win32-x64
 
-npm test                           # 146 项逻辑测试，不联网、不调用模型
-npm run test:all                   # 全部 14 项验收，约 10–15 分钟（含真实模型调用）
-npm run test:all -- --skip-live    # 跳过真实模型调用，约 2–3 分钟
+npm test                           # 211 项逻辑测试，不联网、不调用模型
+npm run test:all                   # 全部 20 项验收，约 10–15 分钟（含真实模型调用）
+npm run test:all -- --skip-live    # 跳过真实模型调用，约 4 分钟
 npm run test:all -- --only=retry,exec-gate
 ```
 

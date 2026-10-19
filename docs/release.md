@@ -2,11 +2,11 @@
 
 一次发布要做的全部动作，按顺序。**不要凭记忆发版**——这里的每条命令都对应一个会真的跑起来的检查。
 
-> 当前状态：仓库还没有 `git`（`.git` 不存在）。第 0 步是初始化并推到 GitHub，否则后面的 CI 与分发都无从谈起。
+> 当前状态：0.6.0 已发布（`v0.6.0`，六个平台的包都在 Release 里）。下面是下次发版的完整流程。
 
 ## 0. 首次准备（已完成，留档备查）
 
-本地已经初始化并提交好了（`main` 分支，首个提交 `chore: 初始化仓库（Iris Unite 0.6.0）`，120 个文件）。
+本地已经初始化并提交好了（`main` 分支，首个提交 `chore: 初始化仓库（Iris Unite 0.6.0）`，122 个文件）。
 之后要重建仓库时照这个来：
 
 ```bash
@@ -20,12 +20,12 @@ git status          # ← 必看：下面这些路径不允许出现
 提交前跑一遍扫描（凭据、本机用户目录、私钥、第三方项目名），确认 `findings` 与 `forbidden` 都是空的：
 
 ```bash
-git diff --cached --name-only   # 逐个过一眼，120 个文件不该有陌生面孔
+git diff --cached --name-only   # 逐个过一眼，122 个文件不该有陌生面孔
 ```
 
 ## 0.1 仓库（已完成）
 
-仓库已在 https://github.com/L0Y8T/iris-unite（public，默认分支 `main`），首个推送包含 119 个文件。
+仓库已在 https://github.com/L0Y8T/iris-unite（public，默认分支 `main`），首个推送包含 122 个文件。
 `origin` 已指向 `https://github.com/L0Y8T/iris-unite.git`，`main` 跟踪 `origin/main`。
 
 凭据走本机 Git Credential Manager，**不要把 token 写进 remote URL 或任何文件**。换机器时重新授权一次即可：
@@ -43,7 +43,7 @@ git push -u origin main
 
 ### 推上去之后要核对的四件事
 
-1. **文件数与顶层结构**：仓库首页应该只有 119 个文件，顶层是 `.github/ assets/ core/ docs/ renderer/ scripts/ tests/` 加几个根文件；看不到 `build/`、`release/`、`dist/`、`node_modules/`、`.test-data/`。
+1. **文件数与顶层结构**：仓库首页应该只有 122 个文件，顶层是 `.github/ assets/ core/ docs/ renderer/ scripts/ tests/` 加几个根文件；看不到 `build/`、`release/`、`dist/`、`node_modules/`、`.test-data/`。
 2. **Actions 跑起来了**：`CI` 应在推送后自动排队。连续推送会取消上一次（workflow 里配了 `concurrency`），以最后一次为准。
 3. **`package.json` 的仓库字段**：已填 `repository` / `homepage` / `bugs`，指向 `L0Y8T/iris-unite`。
 4. **仓库描述与 topics**：在仓库首页右侧编辑，建议 `electron`、`research`、`llm`、`reproducibility`、`citation-verification`——这些直接影响能不能被搜到。
@@ -124,8 +124,23 @@ npm run dist:win         # ② Windows：NSIS 安装器 + portable
 
 macOS 与 Linux 的包**不能在这台 Windows 机器上产出**（builder 直接拒绝：`Build for macOS is supported only on macOS`）。两条路：
 
-- 推一个 `v<版本>` 的 tag → CI 的 `package` 任务在 `macos-latest` / `ubuntu-latest` 上产出 `dmg` / `AppImage`，作为 artifact 下载；
-- 或在 GitHub Actions 页面手动 `Run workflow`（`workflow_dispatch`）。
+- 推一个 `v<版本>` 的 tag → CI 的 `package` 任务在 `macos-latest` / `ubuntu-latest` 上产出 `dmg` / `AppImage` / `deb`，作为 artifact 下载；
+- 或在 GitHub Actions 页面手动 `Run workflow`（`workflow_dispatch`，`package` 任务同样会跑）。
+
+> **文件名里的空格**：electron-builder 产出的是 `Iris Unite Setup 0.6.0.exe`（带空格）。
+> GitHub 上传资产时会把空格换成点，变成 `Iris.Unite.Setup.0.6.0.exe` 这种怪名。
+> 上传后统一改成短横线名即可（`PATCH /repos/<owner>/<repo>/releases/assets/<id>`，body `{"name": "..."}`，不用重传）：
+
+| 本地产物 | Release 里的名字 |
+| --- | --- |
+| `Iris Unite Setup 0.6.0.exe` | `iris-unite-0.6.0-win-x64-setup.exe` |
+| `Iris Unite 0.6.0.exe` | `iris-unite-0.6.0-win-x64-portable.exe` |
+| `Iris Unite-0.6.0-arm64.dmg` | `iris-unite-0.6.0-mac-arm64.dmg` |
+| `Iris Unite-0.6.0.dmg` | `iris-unite-0.6.0-mac-x64.dmg` |
+| `Iris Unite-0.6.0.AppImage` | `iris-unite-0.6.0-linux-x86_64.AppImage` |
+| `iris-unite_0.6.0_amd64.deb` | 同名（deb 本身不带空格） |
+
+改完名字要同步两处写死文件名的地方：README 的「下载」表、Release 正文的「产物」表。
 
 ## 4. 本机部署（仅当你在这台机器上自用）
 
@@ -157,7 +172,17 @@ git tag v0.6.0
 git push origin main --tags
 ```
 
-CI 会自动跑三平台测试；`package` 任务产出三个平台的安装包。下载 artifact 后人工核对一遍：文件名带版本号、`dist/` 里没有混进 `.map` 或 `tests/`。
+CI 会自动跑三平台测试；`package` 任务产出三个平台的安装包。六个 job 全绿之后才算可以发。
+
+### 6.1 建 Release 并上传安装包
+
+1. 从该 tag 的运行里下载三个 artifact（`gh run download <run-id>`，或走 Actions artifact API——注意 302 跳到对象存储后**不能再带 `Authorization` 头**，否则 400）；
+2. 解压后逐个核对：文件名带版本号、`dist/` 里没有混进 `.map` 或 `tests/`；
+3. 新建 Release，tag 选 `v<版本>`，标题 `Iris Unite <版本>`，正文用 `release-notes-<版本>.md`（按第 5 节三条自检）；
+4. 上传六个包，按上表改成短横线名；
+5. 打开 Release 页面点一遍下载链接，确认不是 404（资产状态 `uploaded` 才算真的传完）。
+
+`release-notes-<版本>.md` 是本地草稿，已被 `.gitignore` 排除，不要提交。
 
 ## 7. 发完之后
 
