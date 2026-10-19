@@ -29,6 +29,17 @@ exports.run = async (win, root, store) => {
     }
     await fs.writeFile(path.join(artifacts, name), screenshot.toPNG());
   };
+  /* 不要依赖宿主环境：本地之所以能通过，是因为这台机器装了 Codex / DSH，
+     它们的工作区文件被读进来了。CI 上那些文件不存在，工作区就只剩「未分组」。
+     这里显式写两个自定义工作区，测试在任何机器上都一样。 */
+  if (store) {
+    const seed = [
+      { path: path.join(root, '.test-data', 'workspace-alpha'), name: '测试工作区 A' },
+      { path: path.join(root, '.test-data', 'workspace-beta'), name: '测试工作区 B' }
+    ];
+    store.data.workspaces = seed;
+    store.save();
+  }
   await until('!!document.querySelector(".welcome") && state.historyLoading === false');
   assert.deepEqual(await js('window.__irisErrors'), []);
   await js('window.__frontendErrors=[];window.addEventListener("error",e=>window.__frontendErrors.push(e.message));true');
