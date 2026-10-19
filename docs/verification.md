@@ -25,6 +25,7 @@ npm run test:all -- --only=retry,exec-gate
 | 1 | 单元测试（210 项） | `npm test` | 预算账本、计划编译、档位规则、引用与数字核验、检索解析、监控、执行模板与参数校验、一键导出、花费估算、沿用上一轮只跑实验（含「必须点名方案」）、三平台分支 | 无 | 70–90 s |
 | 2 | 本机历史读取 | `node tests/history-check.cjs` | 能读出 Codex / DSH 历史，且读取过程中不修改原文件 | 无 | 9 s |
 | 2.5 | 三平台分支与路径 | `node tests/platform.test.cjs` | Python 候选顺序、Codex/DSH 路径、图标格式、窗口选项、快捷键、关窗行为在 win32/darwin/linux 三种取值下都正确；并静态扫描仓库里不许再有写死的 Windows 路径与 Ctrl 判断 | 无 | 3 s |
+| 2.6 | 平台注入到渲染进程 | `node tests/runtime-probe.cjs` | sandbox preload 真的把 `process.platform` 交给了页面（拿不到时 mac 会静默退化成自绘按钮 + Ctrl 快捷键，而 Windows 上看不出异常）；同时核对 `window.duet` 暴露的方法数、窗口控制通道可用、无页面异常 | 无（隔离数据目录） | 2–15 s |
 | 3 | 模型通道连通 | `node tests/live-check.cjs` | DeepSeek 与 GPT(Codex) 各发一次短请求，确认通道可用 | **真实 2 次** | 16 s |
 | 4 | 重新生成与旧答案保留 | `node tests/retry-check.cjs` | 失败重跑不丢旧答案；成功才把旧答案标为被取代；生成中不允许重跑 | 无（本地假模型） | 6–8 s |
 | 5 | 科研 草稿→核验→发布 | `node tests/research-run-check.cjs` | 整轮结束前正文为空（草稿期），核验与自检完成后才发布 | 无（本地假模型） | 6 s |

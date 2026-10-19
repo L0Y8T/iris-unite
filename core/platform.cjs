@@ -12,6 +12,16 @@ const os = require('node:os');
 const path = require('node:path');
 
 /**
+ * 按「目标平台」拼路径，而不是按运行平台。
+ * path.join 用运行平台的分隔符，拿它拼别的平台路径会得到 C:\Users\me/AppData/... 这种混合串——
+ * 单测在 Linux 上校验 win32 分支时就会撞上这个坑。
+ */
+function targetJoin(platform, ...parts) {
+  const sep = platform === 'win32' ? '\\' : '/';
+  return parts.filter(part => part !== undefined && part !== null && part !== '').join(sep);
+}
+
+/**
  * Python 候选命令。
  * macOS 与多数 Linux 发行版只有 `python3`，没有 `python` 别名（macOS 的 python 甚至不存在）；
  * `py` 是 Windows 的启动器，其他平台没有。
@@ -32,16 +42,16 @@ function codexBinaryName(platform = process.platform) {
 
 /** Codex CLI 的兜底搜索目录：PATH 没带上 npm 全局目录时（GUI 启动的进程尤其常见）还有这一步。 */
 function codexRoots(platform = process.platform, home = os.homedir()) {
-  if (platform === 'win32') return [path.join(home, 'AppData', 'Local', 'OpenAI', 'Codex', 'bin')];
-  return [path.join(home, '.npm-global', 'bin'), '/usr/local/bin', '/opt/homebrew/bin', path.join(home, '.local', 'bin')];
+  if (platform === 'win32') return [targetJoin(platform, home, 'AppData', 'Local', 'OpenAI', 'Codex', 'bin')];
+  return ['/usr/local/bin', '/opt/homebrew/bin', targetJoin(platform, home, '.npm-global', 'bin'), targetJoin(platform, home, '.local', 'bin')];
 }
 
 /** DSH Desktop 的安装位置：只在解它的 .zstd 会话日志时需要，缺失属于正常情况。 */
 function dshInstallCandidates(platform = process.platform, home = os.homedir(), env = process.env) {
   if (env.DSH_INSTALL_DIR) return [env.DSH_INSTALL_DIR];
-  if (platform === 'win32') return [path.join(home, 'AppData', 'Local', 'Programs', 'DSH Desktop')];
-  if (platform === 'darwin') return ['/Applications/DSH Desktop.app', path.join(home, 'Applications', 'DSH Desktop.app')];
-  return [path.join(home, '.local', 'share', 'dsh-desktop'), '/opt/dsh-desktop', '/usr/lib/dsh-desktop'];
+  if (platform === 'win32') return [targetJoin(platform, home, 'AppData', 'Local', 'Programs', 'DSH Desktop')];
+  if (platform === 'darwin') return ['/Applications/DSH Desktop.app', targetJoin(platform, home, 'Applications', 'DSH Desktop.app')];
+  return [targetJoin(platform, home, '.local', 'share', 'dsh-desktop'), '/opt/dsh-desktop', '/usr/lib/dsh-desktop'];
 }
 
 /** 图标按平台优先选：mac 只认 .icns，Linux 认 png，Windows 认 ico。 */

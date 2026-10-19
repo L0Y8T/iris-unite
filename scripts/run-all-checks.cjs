@@ -26,6 +26,7 @@ const only = onlyArg ? onlyArg.slice('--only='.length).split(',').map(s => s.tri
 const STEPS = [
   { id: 'unit', name: '单元测试（210 项）', kind: 'npm', script: 'test', spend: '无', expect: 'fail 0', seconds: 75 },
   { id: 'platform', name: '三平台分支与路径', kind: 'node', file: 'tests/platform.test.cjs', spend: '无', expect: 'fail 0', seconds: 3 },
+  { id: 'platform-runtime', name: '平台注入到渲染进程', kind: 'node', file: 'tests/runtime-probe.cjs', spend: '无（隔离数据目录）', expect: '"passed": true', seconds: 15 },
   { id: 'history', name: '本机历史读取', kind: 'node', file: 'tests/history-check.cjs', spend: '无', seconds: 9 },
   { id: 'live', name: '模型通道连通', kind: 'node', file: 'tests/live-check.cjs', spend: '真实调用 2 次', live: true, seconds: 16 },
   { id: 'retry', name: '重新生成与旧答案保留', kind: 'node', file: 'tests/retry-check.cjs', spend: '无（本地假模型）', expect: '"passed": true', seconds: 8 },

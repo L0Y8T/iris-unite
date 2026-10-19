@@ -50,7 +50,6 @@ async function exportResult(messageId, saveAs = false) {
     if (result?.reason === 'empty') { toast('这一轮还没有可导出的内容', 3000); return false; }
     toast('导出失败', 3000); return false;
   }
-  state.lastExport = { id: messageId || null, filePath: result.filePath, name: result.name };
   toast(`已导出 ${result.name}（${Math.max(1, Math.round(result.bytes / 1024))} KB）`, 6000);
   const target = messageId
     ? document.querySelector(`button[data-export-result="${CSS.escape(messageId)}"]`)

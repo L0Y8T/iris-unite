@@ -404,7 +404,28 @@
 - `.gitignore` 补齐 `dist/`、`Iris-data/`、`.DS_Store`、`Thumbs.db` 等；`.gitattributes` 固定文本文件为 LF、二进制不做转换——否则 Windows 检出 CRLF 会把整个仓库的 diff 弄脏。
 - README 增加英文摘要、平台支持矩阵、各平台差异表、未签名产物的处理方式，并在矩阵里明确标注哪一栏是「真机验证过」、哪一栏是「代码已适配」。
 
-### 19.5 没做的（不是遗漏，是没条件做）
+### 19.5 公开前的整仓复查
+
+整理仓库准备公开时做的一轮全量检查，实际修掉的问题：
+
+| 问题 | 位置 | 修法 |
+| --- | --- | --- |
+| **按目标平台拼路径却用了 `path.join`** | `core/platform.cjs` | `path.join` 用**运行平台**的分隔符，在 Linux 上算 win32 路径会得到 `C:\Users\me/AppData/...` 这种混合串。改成按目标平台显式选分隔符，函数才真正与运行平台无关（这条会让 `tests/platform.test.cjs` 在 CI 的 Linux 任务上失败） |
+| 图标资源查两遍 | `main.cjs` | `platformAssets()` 在同一个对象字面量里调了两次，等于六次 `existsSync`；改成先取一次 |
+| 窗口关闭后仍去 `show()` | `main.cjs` | `loadFile` 期间窗口可能已被关掉（`win` 被置空），补 `win && !win.isDestroyed()` 守卫 |
+| 死状态 | `renderer/app.js` | `state.lastExport` 赋值后没人读，删掉 |
+| 本机用户名进公开仓库 | `docs/handoff-0.5.md` | 10 处 `C:\Users\<用户名>` 换成 `%USERPROFILE%`，第三方项目名一并去掉 |
+| 旧稿与备份目录会被提交 | `docs/backups/` | 加进 `.gitignore`——版本库本身就是历史 |
+| 死链 | `docs/handoff-0.5.md` | 指向仓库外、已不存在的截图，改成说明文字 |
+| 旧品牌图标无人引用 | `assets/duet.ico`、`duet.png` | 删除 |
+| 诊断脚本未登记 | `tests/stage-preview-check.cjs` | 补进 `docs/verification.md` 的「不在一键里」表 |
+
+另外把一次性的探针转成了正式检查 `tests/runtime-probe.cjs`：它断言 sandbox preload 真的把 `process.platform` 交给了页面。
+这条没法用单测证明，但拿不到时 mac 上会静默退化成「自绘窗口按钮 + Ctrl 快捷键」，而 Windows 上看不出任何异常——正是最容易漏掉的那类缺口。
+
+整仓扫描结果（84 个 JS 文件）：语法 0 错、IPC 通道 43 对 43 一致、`$('#id')` 引用与动态生成的都核对过、无残留调试输出、无跨平台大小写冲突。
+
+### 19.6 没做的（不是遗漏，是没条件做）
 
 - **便携 Python 内置**（方案 D1 的 B 案）：要随包分发 `python-build-standalone`（+30–50 MB），且三平台的解释器包在 Windows 上没法验证。当前走「用户自备 Python + 明确提示」。
 - **代码签名**（D3）：需要付费证书。

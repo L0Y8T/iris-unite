@@ -831,10 +831,12 @@ app.whenReady().then(async () => {
  * 其他平台继续用一个自绘标题栏 + 无菜单的紧凑窗口。
  */
 async function createWindow() {
+  /* 图标只查一次：platformAssets 会挨个 existsSync，写两遍就是双倍盘查询。 */
+  const assets = platformAssets();
   win = new BrowserWindow({
     title: 'Iris Unite', width: 1380, height: 920, minWidth: 940, minHeight: 660,
     ...platform.windowOptions(),
-    backgroundColor: '#ffffff', ...(platformAssets().icon ? { icon: platformAssets().icon } : {}), show: false,
+    backgroundColor: '#ffffff', ...(assets.icon ? { icon: assets.icon } : {}), show: false,
     webPreferences: { preload: path.join(__dirname, 'preload.cjs'), contextIsolation: true, nodeIntegration: false, sandbox: true, spellcheck: false, offscreen: frontendTest, backgroundThrottling: !frontendTest }
   });
   if (platform.needsApplicationMenu()) {
@@ -846,7 +848,8 @@ async function createWindow() {
   win.webContents.on('will-navigate', event => event.preventDefault());
   win.on('closed', () => { win = null; });
   await win.loadFile(path.join(__dirname, 'renderer/index.html'));
-  if (!smoke && !frontendTest) win.show();
+  /* 加载期间用户可能已经关掉窗口：此时 win 已被 closed 处理器置空，不能再 show。 */
+  if (win && !win.isDestroyed() && !smoke && !frontendTest) win.show();
   return win;
 }
 /* macOS 的惯例是关窗不退出程序；点 Dock 图标再开一个窗口。其他平台关窗即退出。 */
