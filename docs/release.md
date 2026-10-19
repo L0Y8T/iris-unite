@@ -23,31 +23,30 @@ git status          # ← 必看：下面这些路径不允许出现
 git diff --cached --name-only   # 逐个过一眼，120 个文件不该有陌生面孔
 ```
 
-## 0.1 在 GitHub 上建仓库
+## 0.1 仓库（已完成）
 
-**不要**勾选「Add a README / .gitignore / license」——仓库必须是空的，否则第一次 push 会被拒绝。
+仓库已在 https://github.com/L0Y8T/iris-unite（public，默认分支 `main`），首个推送包含 119 个文件。
+`origin` 已指向 `https://github.com/L0Y8T/iris-unite.git`，`main` 跟踪 `origin/main`。
 
-- 网页：github.com/new → 仓库名 `iris-unite` → Public → **什么都不勾** → Create
-- 或者装 GitHub CLI 后一条命令：`gh repo create iris-unite --public --source=. --remote=origin`
+凭据走本机 Git Credential Manager，**不要把 token 写进 remote URL 或任何文件**。换机器时重新授权一次即可：
 
 ```bash
-git remote add origin https://github.com/<你的用户名>/iris-unite.git
+git push -u origin main     # 首次会弹浏览器授权
+```
+
+清空重来时（本地仓库已存在，不要重复 init）：
+
+```bash
+git remote set-url origin https://github.com/L0Y8T/iris-unite.git
 git push -u origin main
 ```
 
-### 推上去之后立刻做三件事
+### 推上去之后要核对的四件事
 
-1. **确认二进制与大目录没上去**：仓库首页应该只有 120 个文件，看不到 `build/`、`release/`、`dist/`、`node_modules/`。
-2. **确认 Actions 跑起来了**：Actions 页签应出现 `CI`，三个平台的任务都该绿。第一次跑会装依赖（约 2 分钟）并跑 210 项单测。
-3. **补 `package.json` 的仓库字段**（现在没有，因为地址还不存在）：
-
-```json
-"repository": { "type": "git", "url": "https://github.com/<你的用户名>/iris-unite.git" },
-"homepage": "https://github.com/<你的用户名>/iris-unite#readme",
-"bugs": { "url": "https://github.com/<你的用户名>/iris-unite/issues" }
-```
-
-再补仓库描述与 topics（`electron`、`research`、`llm`、`reproducibility`、`citation-verification`），这些直接影响能不能被搜到。
+1. **文件数与顶层结构**：仓库首页应该只有 119 个文件，顶层是 `.github/ assets/ core/ docs/ renderer/ scripts/ tests/` 加几个根文件；看不到 `build/`、`release/`、`dist/`、`node_modules/`、`.test-data/`。
+2. **Actions 跑起来了**：`CI` 应在推送后自动排队。连续推送会取消上一次（workflow 里配了 `concurrency`），以最后一次为准。
+3. **`package.json` 的仓库字段**：已填 `repository` / `homepage` / `bugs`，指向 `L0Y8T/iris-unite`。
+4. **仓库描述与 topics**：在仓库首页右侧编辑，建议 `electron`、`research`、`llm`、`reproducibility`、`citation-verification`——这些直接影响能不能被搜到。
 
 ## 1. 改版本号（两处，必须同时改）
 
