@@ -6,6 +6,10 @@ exports.run = async (win, root) => {
   const until = async (code, timeout = 25000) => { const start = Date.now(); while (Date.now() - start < timeout) { if (await js(code)) return; await new Promise(r => setTimeout(r, 100)); } throw new Error('UI timed out: ' + code); };
   const capture = async name => { await fs.mkdir(path.join(root, 'artifacts'), { recursive: true }); await fs.writeFile(path.join(root, 'artifacts', name), (await win.webContents.capturePage()).toPNG()); };
   await until('document.querySelector(".welcome") && document.querySelector("#history-count").textContent !== "…"', 90000);
+  /* 0.6.0 起默认模式是科研模式（芯片变成环节芯片）。这一项验的是「对话」模式下的模型芯片、
+     Power 覆盖层与提示淡出，所以显式切到对话模式，不依赖默认值。 */
+  await js('document.querySelector("[data-run-mode=standard]").click();true');
+  await until('!!document.querySelector(".model-chip")');
   await js('window.__uiErrors=[];window.addEventListener("error",e=>window.__uiErrors.push(e.message));window.__phases=[];window.duet.onEvent(e=>{if(e.type==="collaboration"&&e.event.kind==="stage")window.__phases.push(e.event.stage.stage)});true');
   const initial = await js('window.duet.init()');
   assert.equal(initial.settings.mode, undefined);
@@ -39,7 +43,7 @@ exports.run = async (win, root) => {
   await js(`Array.from(document.querySelectorAll('.workspace-card')).find(b=>b.dataset.workspace===${JSON.stringify(workspace.id)}).click()`);
   await until('document.querySelectorAll(".history-row").length > 0');
   const ids = await js('Array.from(document.querySelectorAll(".history-row")).map(b=>b.dataset.thread)'); assert.ok(ids.every(id => catalog.assignments[id] === workspace.id));
-  await js('document.querySelector("#new-chat").click();document.querySelector("[data-model-options=gpt]").click()');
+  await js('document.querySelector("#new-chat").click();document.querySelector("[data-run-mode=standard]").click();document.querySelector("[data-model-options=gpt]").click()');
   await until('document.querySelector("#power-slider")'); await capture('v3-power.png');
   const slider = await js('(()=>{const e=document.querySelector("#power-slider"),r=e.getBoundingClientRect();return{x:r.x,y:r.y,width:r.width,height:r.height,value:Number(e.value),max:Number(e.max)}})()');
   // Exercise the native range with a pointer drag, then keyboard navigation.

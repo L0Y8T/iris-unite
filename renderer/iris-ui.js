@@ -72,7 +72,7 @@ function renderModeControls() {
 async function changeRunMode(mode) {
   if (state.busy.has(state.active?.id) || isHistory()) return;
   if (state.active) { const id = state.active.id, updated = await window.duet.runConfig(id, mode, currentResearch()); if (state.active?.id === id) { state.active.mode = updated.mode; state.active.researchConfig = updated.researchConfig; } }
-  state.mode = mode; renderModels(); renderRunStatus();
+  state.mode = mode; renderModels(); renderRunStatus(); renderSetupNotice();
 }
 
 /** 输入区下面那排芯片：把每个环节实际会用到的模型直接摊开，不用点开面板才知道。 */
@@ -143,7 +143,8 @@ function researchSummary(run) {
   return `<div class="process-note research-summary"><strong>完整性与证据</strong><ul>${rows.join('')}</ul></div>`;
 }
 
-function connectionReady(id) { const c = state.settings.connections?.find(c => c.id === id); return id === 'gpt' ? state.settings.codexAvailable : id === 'deepseek' ? state.settings.hasKey : !!c && (c.hasKey || c.allowNoKey); }
+/* 通道是否可用统一由 app.js 的 channelReady 判定，这里只保留旧名字给既有调用点用。 */
+function connectionReady(id) { return channelReady(id); }
 function renderModelPicker() {
   const selected = state.active?.models || state.models;
   $('#model-picker-list').innerHTML = (state.catalog.providers || ['deepseek', 'gpt']).map(p => {

@@ -24,7 +24,8 @@
       <nav id="chat-tabs" class="chat-tabs" aria-label="对话视图"><button data-chat-tab="answer" class="active">对话</button><button data-chat-tab="process">协作记录<span id="process-count"></span></button></nav>
       <div id="content" class="content" tabindex="-1" aria-label="对话内容"></div>
       <div id="composer-area" class="composer-area">
-        <div id="composer-mode" class="composer-mode"><div id="mode-controls" class="mode-controls" role="group" aria-label="回答模式"><button data-run-mode="standard" aria-pressed="true">对话</button><button data-run-mode="research" aria-pressed="false">科研模式</button></div><button id="research-config-button" type="button" class="research-config-button hidden">配置研究架构<span data-icon="settings"></span></button></div>
+        <div id="setup-notice" class="setup-notice hidden" role="status" aria-live="polite"></div>
+        <div id="composer-mode" class="composer-mode"><div id="mode-controls" class="mode-controls" role="group" aria-label="回答模式"><button data-run-mode="research" aria-pressed="true">科研模式</button><button data-run-mode="standard" aria-pressed="false">对话</button></div><button id="research-config-button" type="button" class="research-config-button">配置研究架构<span data-icon="settings"></span></button></div>
         <div id="resume-hint" class="resume-hint hidden" role="note"><span>上一轮给了实验建议，还没有执行</span><button id="resume-run-button" type="button" class="secondary-button">执行实验</button></div><div id="run-status" class="run-status hidden" role="status" aria-live="polite"></div>
         <div id="history-notice" class="history-notice hidden"><span>原客户端历史 · 只读</span><button id="continue-button" class="primary-button">从这里继续<span data-icon="arrow-right"></span></button></div>
         <div id="composer" class="composer">

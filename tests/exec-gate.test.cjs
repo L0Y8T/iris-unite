@@ -30,6 +30,14 @@ test('执行预算：本对话次数到顶就拒绝，并说明是哪一项', ()
   assert.equal(evaluateBudget({ runs, conversationId: 'other', now: NOW }).ok, true);
 });
 
+test('执行预算：没有打开的对话时不按「本对话」计数，只受每日额度约束', () => {
+  const runs = Array.from({ length: 20 }, (_, i) => entry({ runId: 'run-n' + i }));
+  const budget = evaluateBudget({ runs, conversationId: null, now: NOW });
+  assert.equal(budget.ok, true, '独立运行不该被「本对话 20 次」挡住');
+  assert.equal(budget.checks.some(check => check.key === 'conversation-runs'), false);
+  assert.equal(budget.remainingRuns, DEFAULT_EXEC_LIMITS.maxRunsPerDay - 20);
+});
+
 test('执行预算：今日次数与今日时长分别把关，昨天的运行不计入今天', () => {
   const many = Array.from({ length: 50 }, (_, i) => entry({ runId: 'run-d' + i, durationMs: 1000 }));
   assert.equal(evaluateBudget({ runs: many, conversationId: null, now: NOW }).ok, false);

@@ -136,6 +136,9 @@ async function launch() {
 
     /* --- model controls: capsule chips and the Power overlay --- */
     await theme('light');
+    /* 默认模式自 0.6.0 起是科研模式；这一段验的是对话模式的胶囊芯片与 Power 覆盖层。 */
+    await app.js('document.querySelector("[data-run-mode=standard]").click();true');
+    await app.until('!!document.querySelector("[data-model-options=gpt]")');
     await app.js('document.querySelector("[data-model-options=gpt]").click();true');
     await app.until('!document.querySelector("#model-popover").classList.contains("hidden")');
     await delay(400);

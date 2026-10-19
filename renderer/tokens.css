@@ -50,6 +50,8 @@
   --accent: #2563eb;
   --accent-strong: #4176e6;
   --accent-soft: #edf3fe;
+  /* 着色底（10% 主色）上的小字：#2563eb 压在这层底上只有 4.49:1，差 0.01 不达 AA，所以单独给一个更深的色。 */
+  --accent-on-tint: #1d4ed8;
   --bubble: #edf3fe;
   --bubble-highlight: #d3e2ff;
 
@@ -64,6 +66,8 @@
   /* 文字用绿：22c55e 在白底只有 2:1，不能直接写文字 */
   --state-success-text: #146c33;
   --state-error: #e5484d;
+  /* 错误色压在 8%–12% 的自色底上时 #e5484d 只有 3.3–3.5:1（11px 小字要 4.5），所以另给一档更深的。 */
+  --state-error-on-tint: #b31d28;
 
   /* Elevation */
   --elevation-stroke: 0 0 0 .5px #00000029;
@@ -128,6 +132,10 @@
   --accent: #679efe;
   --accent-strong: #5686fe;
   --accent-soft: #34415b;
+  /* 深色下这一档在着色底上是 5.9:1，直接沿用主色即可。 */
+  --accent-on-tint: #679efe;
+  /* 深色底上 8% 红被压暗了，#e5484d 只有 4.3:1，小字要更亮的一档。 */
+  --state-error-on-tint: #ff8a8f;
   --bubble: #2c2c2e;
   --bubble-highlight: #43454a;
 

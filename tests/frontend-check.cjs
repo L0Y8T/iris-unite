@@ -70,6 +70,10 @@ exports.run = async (win, root, store) => {
   assert.ok(await js('document.querySelector("#prompt").value.length>5'));
   await js('document.querySelector("#prompt").value="";document.querySelector("#prompt").dispatchEvent(new Event("input",{bubbles:true}));true');
   await setTheme('dark'); await capture('v5-welcome-dark.png'); await audit('dark welcome');
+  /* 默认模式自 0.6.0 起是科研模式，输入区显示的是环节芯片。下面这一整段验的是「对话」模式
+     的模型胶囊、Power 覆盖层与响应式布局，所以显式切过去，不依赖默认值。 */
+  await js('document.querySelector("[data-run-mode=standard]").click()');
+  await until('!!document.querySelector("[data-model=gpt]")');
   const name = initial.modelCatalog.gpt.find(m => m.id === initial.settings.defaultModelConfig.gpt.model).name;
   assert.ok(await js(`document.querySelector('[data-model=gpt]').textContent.includes(${JSON.stringify(name)})`));
   await js('document.querySelector("[data-model-options=gpt]").click()');

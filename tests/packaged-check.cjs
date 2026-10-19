@@ -38,6 +38,9 @@ async function launch() {
   assert.ok(await app.js('document.querySelector(".iris-light").complete && document.querySelector(".iris-light").naturalWidth > 0'));
   assert.deepEqual(await app.js('window.__irisErrors'), []);
   const displayName = initial.modelCatalog.gpt.find(m => m.id === initial.settings.defaultModelConfig.gpt.model).name;
+  /* 默认模式自 0.6.0 起是科研模式，输入区显示环节芯片；这里要验的是对话模式的模型胶囊。 */
+  await app.js('document.querySelector("[data-run-mode=standard]").click();true');
+  await app.until('!!document.querySelector("[data-model=gpt]")');
   assert.ok(await app.js(`document.querySelector('[data-model=gpt]').textContent.includes(${JSON.stringify(displayName)})`));
   const workspace = initial.workspaces.find(w => w.sources.includes('Codex'));
   const modelConfig = initial.settings.defaultModelConfig;

@@ -17,7 +17,7 @@ function markdown(text) {
 const platformInfo = window.duet?.platform || 'win32';
 document.documentElement.dataset.platform = platformInfo;
 
-const state = { local: [], history: [], workspaces: [], assignments: {}, settings: {}, catalog: { gpt: [], deepseek: [], labels: {} }, active: null, view: 'chat', models: ['deepseek', 'gpt'], config: null, selectedWorkspace: 'all', expanded: new Set(), expandedChats: new Set(), filter: 'all', query: '', sidebarQuery: '', searchHits: new Map(), historyErrors: [], historyLoading: true, busy: new Set(), drafts: new Map(), navigation: 0, popover: null, chatTab: 'answer', openProcesses: new Set(), pendingEvents: [], configQueue: Promise.resolve(), mode: 'standard', researchConfig: null };
+const state = { local: [], history: [], workspaces: [], assignments: {}, settings: {}, catalog: { gpt: [], deepseek: [], labels: {} }, active: null, view: 'chat', models: ['deepseek', 'gpt'], config: null, selectedWorkspace: 'all', expanded: new Set(), expandedChats: new Set(), filter: 'all', query: '', sidebarQuery: '', searchHits: new Map(), historyErrors: [], historyLoading: true, busy: new Set(), drafts: new Map(), navigation: 0, popover: null, chatTab: 'answer', openProcesses: new Set(), pendingEvents: [], configQueue: Promise.resolve(), mode: 'research', researchConfig: null };
 /* 侧边栏每个工作区默认只铺前几个对话：64 个对话全展开会把侧栏撑成一整屏，
    真正要找的那条反而更难扫到。多出来的折成一行「还有 N 个」。 */
 const SIDEBAR_CHAT_LIMIT = 6;
@@ -31,6 +31,55 @@ const activeWorkspace = () => state.active ? state.workspaces.find(w => w.id ===
 const effortLabel = e => state.catalog.labels[e]?.[0] || e;
 const config = () => clone({ ...state.settings.defaultModelConfig, ...(state.active?.modelConfig || state.config || {}) });
 const modelName = (provider, id) => state.catalog[provider]?.find(m => m.id === id)?.name || id || providerName(provider);
+/* 通道可用性：设置里存了密钥、本机检测到 Codex CLI、或已启用的连接填了密钥（或声明免密钥），才算可用。
+   首次打开时默认预选和发送前拦截都以这里为准——预选一个必然失败的通道，第一条消息就会撞墙。 */
+const BUILTIN_CHANNELS = ['deepseek', 'gpt'];
+function channelReady(id) {
+  const settings = state.settings || {};
+  if (id === 'deepseek') return !!settings.hasKey;
+  if (id === 'gpt') return !!settings.codexAvailable;
+  const connection = (settings.connections || []).find(item => item.id === id);
+  return !!connection && connection.enabled !== false && !!(connection.hasKey || connection.allowNoKey);
+}
+function channelLabel(id) {
+  if (id === 'deepseek') return 'DeepSeek';
+  if (id === 'gpt') return 'GPT · Codex';
+  return (state.settings.connections || []).find(item => item.id === id)?.name || providerName(id);
+}
+function channelBlockReason(id) {
+  if (id === 'deepseek') return '未配置密钥';
+  if (id === 'gpt') return '未找到 Codex CLI';
+  const connection = (state.settings.connections || []).find(item => item.id === id);
+  if (!connection) return '连接已不存在';
+  if (connection.enabled === false) return '已停用';
+  return '待填写密钥';
+}
+const readyBuiltinChannels = () => BUILTIN_CHANNELS.filter(channelReady);
+const anyChannelReady = () => readyBuiltinChannels().length > 0 || (state.settings.connections || []).some(c => channelReady(c.id));
+/** 新对话默认选谁：可用的内置通道全选上；一个可用都没有时保留两个内置通道，让芯片自己说明缺什么。 */
+function defaultModels() {
+  const ready = readyBuiltinChannels();
+  return ready.length ? ready : BUILTIN_CHANNELS.slice();
+}
+/** 这个通道在界面快照里是不是「认识」的：认识才能判断可用性，不认识就交给主进程去报错。 */
+function channelKnown(id) {
+  if (BUILTIN_CHANNELS.includes(id)) return true;
+  return (state.settings.connections || []).some(item => item.id === id) || Array.isArray(state.catalog?.[id]);
+}
+/** 这条消息真正会用到的通道：对话模式看参与模型，科研模式看各环节各自选的模型。 */
+function neededChannels() {
+  if (runMode() === 'research') {
+    const config = currentResearch();
+    const ids = new Set();
+    Object.values(config.choices || {}).forEach(choice => { if (choice?.provider) ids.add(choice.provider); });
+    (config.tasks || []).forEach(task => { if (task?.choice?.provider) ids.add(task.choice.provider); });
+    return [...ids];
+  }
+  return [...new Set(state.active?.models || state.models)];
+}
+/* 只拦「界面确认缺失」的通道：刚通过接口加进来、界面快照还没刷新到的连接不该被挡在门外，
+   那种情况让主进程按真实状态报错。 */
+const missingChannels = () => neededChannels().filter(id => channelKnown(id) && !channelReady(id));
 function toast(text, duration = 2500) {
   clearTimeout(toast.timer); clearTimeout(toast.hideTimer);
   const el = $('#toast'); el.textContent = text; el.classList.remove('hidden', 'fading');
@@ -157,12 +206,13 @@ function renderModels() {
   const selected = state.active?.models || state.models, choices = config();
   const busy = state.busy.has(state.active?.id);
   const researching = runMode() === 'research';
-  $('#model-controls').innerHTML = researching ? researchModelChips(busy) : [...new Set(['deepseek','gpt', ...selected])].map(provider => { const choice = choices[provider]; if (!choice) return ''; return `<div class="model-control ${selected.includes(provider) ? 'enabled' : ''}"><button class="model-chip ${selected.includes(provider) ? 'selected' : ''}" data-model="${provider}" aria-pressed="${selected.includes(provider)}" title="${selected.includes(provider) ? '停用' : '启用'} ${esc(modelName(provider, choice.model))}" ${busy ? 'disabled' : ''}><span class="model-tick">${icon('check')}</span><span class="concrete-model-name">${esc(modelName(provider, choice.model))}</span></button><button class="model-options" data-model-options="${provider}" aria-label="调整 ${esc(modelName(provider, choice.model))} 强度：${esc(effortLabel(choice.effort))}" title="模型与强度" aria-expanded="${state.popover === provider}" ${busy ? 'disabled' : ''}><span>${esc(effortLabel(choice.effort))}</span>${icon('down')}</button></div>`; }).join('') + `<button id="select-models" class="add-model-button" data-open-models aria-label="选择参与模型" title="选择参与模型" ${busy ? 'disabled' : ''}>${icon('plus')}</button>`;
+  $('#model-controls').innerHTML = researching ? researchModelChips(busy) : [...new Set(['deepseek','gpt', ...selected])].map(provider => { const choice = choices[provider]; if (!choice) return ''; const ready = channelReady(provider); return `<div class="model-control ${selected.includes(provider) ? 'enabled' : ''}"><button class="model-chip ${selected.includes(provider) ? 'selected' : ''}" data-model="${provider}" aria-pressed="${selected.includes(provider)}" title="${selected.includes(provider) ? '停用' : '启用'} ${esc(modelName(provider, choice.model))}${ready ? '' : `（${channelBlockReason(provider)}）`}" ${busy ? 'disabled' : ''}><span class="model-tick">${icon('check')}</span><span class="concrete-model-name">${esc(modelName(provider, choice.model))}</span></button><button class="model-options" data-model-options="${provider}" aria-label="调整 ${esc(modelName(provider, choice.model))} 强度：${esc(effortLabel(choice.effort))}" title="模型与强度" aria-expanded="${state.popover === provider}" ${busy ? 'disabled' : ''}><span>${esc(effortLabel(choice.effort))}</span>${icon('down')}</button></div>`; }).join('') + `<button id="select-models" class="add-model-button" data-open-models aria-label="选择参与模型" title="选择参与模型" ${busy ? 'disabled' : ''}>${icon('plus')}</button>`;
   $('#prompt').placeholder = researching ? '描述研究问题、已知证据与约束，交给科研模式分析…' : selected.length > 1 ? '输入问题，交给所选模型一起解答…' : `向 ${modelName(selected[0], choices[selected[0]]?.model)} 提问…`;
   $('#composer-context').textContent = researching ? '科研推演 · 公开过程按需展开' : selected.length > 1 ? `共享上下文 · ${selected.length} 模型协作` : '共享历史 · 单模型回答';
   $('#mode-badge').textContent = isHistory() ? '历史记录' : researching ? '科研模式' : selected.length > 1 ? '协作模式' : '标准模式';
   renderModeControls();
   if (!state.active && state.view === 'chat' && state.chatTab === 'answer') $('#content').innerHTML = welcome();
+  renderSetupNotice();
 }
 function closePopover(restoreFocus = false) { const provider = state.popover; state.popover = null; $('#model-popover').classList.add('hidden'); document.querySelectorAll('[data-model-options]').forEach(el => el.setAttribute('aria-expanded', 'false')); if (restoreFocus && provider) document.querySelector(`[data-model-options="${provider}"]`)?.focus(); }
 function renderPopover(provider) {
@@ -199,11 +249,28 @@ function renderSend() {
   const busy = state.busy.has(state.active?.id);
   $('#send-button').classList.toggle('stop', busy); $('#send-button').innerHTML = icon(busy ? 'stop' : 'arrow-up'); $('#send-button').setAttribute('aria-label', busy ? '停止生成' : '发送消息'); $('#send-button').disabled = !busy && !$('#prompt').value.trim(); $('#prompt').disabled = busy;
 }
+/* 首屏示例按模式分开：科研模式给能直接跑的研究问题，对话模式给轻一些的研究向问题。
+   两套都是真的能发出去的句子，点一下只填进输入框，不会自动发送。 */
+const RESEARCH_PROMPTS = [
+  ['search', '综述一个研究方向', '先检索真实文献，再给带引用的结论', '综述近五年大语言模型在科研文献检索中的应用，说明主流方法、证据强度与证据缺口。'],
+  ['compare', '比较两种方法', '按证据强弱理清取舍与边界', '比较图神经网络与梯度提升树在分子性质预测上的表现差异，并说明各自的适用边界。'],
+  ['check', '验证一个假设', '要求一个可证伪的对照设计', '针对「检索增强能降低模型编造引用」这一假设，设计一个可证伪的对照实验，说明指标与判定阈值。'],
+  ['plan', '拆解一个研究问题', '把大问题拆成可并行的子任务', '把「如何评估长文档问答的忠实度」拆成 4 项可并行研究、彼此不重叠的子任务，并给出每项的交付物。']
+];
+const CHAT_PROMPTS = [
+  ['chat', '解释一个概念', '用清楚的例子建立理解', '用简单的例子解释混杂变量（confounder）是什么。'],
+  ['plan', '拆解一个计划', '从目标到可执行的下一步', '帮我把一个论文写作计划拆成可执行的步骤。'],
+  ['compare', '比较两种方案', '理清差异与取舍', '帮我比较两种统计检验方案的适用条件与取舍。'],
+  ['code', '审查一段实验代码', '找出可复现性问题', '我想检查一段实验代码的可复现性问题。请先告诉我需要提供哪些背景，再逐条检查。']
+];
 function welcome() {
   const w = selectedWorkspace();
   const selected = state.models, researching = runMode() === 'research';
-  const prompts = [['plan','拆解一个计划','从目标到可执行的下一步','帮我把一个新想法拆解成可执行的步骤。'],['code','审查一段代码','找出问题，给出具体修正','我想审查一段代码。请先告诉我需要提供哪些背景，再检查正确性和边界情况。'],['compare','比较两种方案','理清差异与取舍','帮我比较两种方案。请先确认我的目标、约束和候选方案。'],['chat','解释一个概念','用清楚的例子建立理解','请用一个简单的例子解释异步编程。']];
-  return `<div class="welcome-container"><section class="welcome"><div class="welcome-mark" aria-hidden="true">${irisMark()}</div><h1>${researching ? '让研究问题，经得起推敲。' : '今天想解决什么问题？'}</h1><p>${researching ? '由 GPT 统筹，研究模型并行探索，再经过反证审查形成建议。' : selected.length > 1 ? '多个模型交换观点、互相审查，为你形成一份完整答案。' : `由 ${esc(providerName(selected[0]))} 为你解答，随时可以启用多模型协作。`}</p><div class="welcome-workspace" title="${esc(w?.path || '')}">${icon('folder')}<span>${esc(w && w.id !== 'unassigned' ? w.name : '选择工作区，或直接开始')}</span>${w && w.id !== 'unassigned' ? '' : `<button data-action="workspaces">选择工作区${icon('chevron')}</button>`}</div>${researching ? researchWelcome() : `<div class="quick-prompts">${prompts.map(([glyph,title,description,prompt]) => `<button data-prompt="${esc(prompt)}"><span class="prompt-icon">${icon(glyph)}</span><span><strong>${title}</strong><small>${description}</small></span><span class="prompt-arrow">${icon('arrow-right')}</span></button>`).join('')}</div>`}</section></div>`;
+  const prompts = researching ? RESEARCH_PROMPTS : CHAT_PROMPTS;
+  const intro = researching
+    ? '先检索真实文献建立资料库，再按环节分工推演，最后逐条核验引用。'
+    : selected.length > 1 ? '多个模型交换观点、互相审查，为你形成一份完整答案。' : `由 ${esc(providerName(selected[0]))} 为你解答，随时可以启用多模型协作。`;
+  return `<div class="welcome-container"><section class="welcome"><div class="welcome-mark" aria-hidden="true">${irisMark()}</div><h1>${researching ? '要让哪个研究问题经得起推敲？' : '今天想解决什么问题？'}</h1><p>${intro}</p><div class="welcome-workspace" title="${esc(w?.path || '')}">${icon('folder')}<span>${esc(w && w.id !== 'unassigned' ? w.name : '选择工作区，或直接开始')}</span>${w && w.id !== 'unassigned' ? '' : `<button data-action="workspaces">选择工作区${icon('chevron')}</button>`}</div><div class="quick-prompts">${prompts.map(([glyph,title,description,prompt]) => `<button data-prompt="${esc(prompt)}"><span class="prompt-icon">${icon(glyph)}</span><span><strong>${title}</strong><small>${description}</small></span><span class="prompt-arrow">${icon('arrow-right')}</span></button>`).join('')}</div>${researching ? researchWelcome() : ''}</section></div>`;
 }
 function replyContent(m) {
   if (m.text) return markdown(m.text);
@@ -343,7 +410,20 @@ function renderChat() {
   $('#export-button').disabled = !state.active; $('#rename-button').disabled = !state.active || history; const del = $('#delete-button'); if (del) del.disabled = !state.active || history;
   if (!state.active) $('#content').innerHTML = welcome(); else renderMessages();
   $('#chat-tabs').classList.remove('hidden'); syncTabs();
-  renderModels(); renderSend(); renderSidebar(); renderRunStatus(); renderResumeHint();
+  renderModels(); renderSend(); renderSidebar(); renderRunStatus(); renderResumeHint(); renderSetupNotice();
+}
+/* 没有可用通道时给一条常驻提示，而不是只弹一条几秒就没的 toast。
+   首次打开就发不出消息是最常见的卡点，用户需要的是看得见、点得动的入口。 */
+function renderSetupNotice() {
+  const el = $('#setup-notice');
+  if (!el) return;
+  const visible = state.view === 'chat' && !isHistory() && !state.busy.has(state.active?.id) && missingChannels().length > 0;
+  if (!visible) { el.classList.add('hidden'); el.innerHTML = ''; return; }
+  const missing = missingChannels();
+  const detail = missing.map(id => `${channelLabel(id)}（${channelBlockReason(id)}）`).join('、');
+  const anythingReady = anyChannelReady();
+  el.classList.remove('hidden');
+  el.innerHTML = `${icon('settings')}<span><strong>${anythingReady ? '这条消息还发不出去' : '还不能开始'}</strong>：${esc(detail)}。<small>${anythingReady ? '在「连接设置」里补上密钥或换一个可用通道。' : '配好任意一个通道就能发消息；文献检索本身不需要密钥。'}</small></span><button type="button" class="secondary-button" data-action="settings">去配置</button>`;
 }
 /* 最近一轮给了实验建议却没执行时，在输入框上方明说一句并给出直达入口：
    否则用户会以为「再问一次」就是执行，结果是整套重跑一遍。
@@ -396,7 +476,7 @@ async function openThread(id) {
     state.active = c; state.chatTab = 'answer'; if (c.messages.some(m => m.status === 'streaming')) state.busy.add(c.id); state.selectedWorkspace = workspaceOf(c); state.expanded.add(state.selectedWorkspace); renderChat(); restoreDraft(); renderSend(); closeMobileSidebar(); $('#content').scrollTop = 0;
   } catch (e) { if (navigation === state.navigation) { renderChat(); fail(e); } }
 }
-function newChat() { saveDraft(); state.navigation++; state.active = null; state.chatTab = 'answer'; state.models = ['deepseek', 'gpt']; state.config = clone(state.settings.defaultModelConfig); renderChat(); restoreDraft(); renderSend(); closeMobileSidebar(); $('#content').scrollTop = 0; $('#prompt').focus(); }
+function newChat() { saveDraft(); state.navigation++; state.active = null; state.chatTab = 'answer'; state.models = defaultModels(); state.config = clone(state.settings.defaultModelConfig); renderChat(); restoreDraft(); renderSend(); closeMobileSidebar(); $('#content').scrollTop = 0; $('#prompt').focus(); }
 async function toggleModel(provider) {
   if (isHistory() || state.busy.has(state.active?.id)) return;
   const current = state.active?.models || state.models;
@@ -412,6 +492,14 @@ async function send() {
   if (state.busy.has(state.active?.id)) { await window.duet.stop(state.active.id); toast('正在停止…'); return; }
   if (sending || isHistory()) return;
   const text = $('#prompt').value.trim(); if (!text) { $('#prompt').focus(); return; }
+  /* 先看这一条要用到的通道是否可用：以前是发出去让主进程按顺序报第一个缺的通道，
+     用户修好一个再撞下一个，还要等一次失败才知道。这里一次说清缺哪些。 */
+  const blocked = missingChannels();
+  if (blocked.length) {
+    renderSetupNotice();
+    toast(`${blocked.map(id => `${channelLabel(id)}（${channelBlockReason(id)}）`).join('、')}不可用，先在「连接设置」里配置`, 6000);
+    return;
+  }
   /* 输入框里写「执行实验：<方案>」也算明确指定：直接接着跑，不重跑前面的环节。
      没写清楚哪一个方案就照普通消息处理——不让程序替用户挑实验方向。 */
   const explicit = /^执行实验[：:]\s*([\s\S]+)$/.exec(text);
@@ -571,6 +659,7 @@ document.addEventListener('click', async event => {
     if (button.dataset.prompt) { $('#prompt').value = button.dataset.prompt; saveDraft(); resizePrompt(); renderSend(); $('#prompt').focus(); return; }
     if (button.dataset.action === 'workspaces') { saveDraft(); state.navigation++; renderWorkspaces(); return; }
     if (button.dataset.action === 'new-chat') return newChat();
+    if (button.dataset.action === 'settings') return openSettings();
     if (button.dataset.action === 'add-workspace') return await addWorkspace();
     if (button.dataset.copy) { const m = state.active?.messages.find(m => m.id === button.dataset.copy); if (m) { await window.duet.copy(m.text); toast('已复制'); } }
     if (button.dataset.exportResult) return await exportResult(button.dataset.exportResult, event.shiftKey === true);
@@ -671,7 +760,7 @@ $('#settings-form').addEventListener('submit', async e => {
   e.preventDefault(); try {
     state.settings = await window.duet.settings({ deepseekModel: $('#deepseek-model').value, gptModel: $('#gpt-model').value, apiKey: $('#deepseek-key').value, clearKey: $('#clear-key').checked, useDshKey: $('#use-dsh-key').checked, pricing: collectPricing() });
     if (!state.active) state.config = clone(state.settings.defaultModelConfig);
-    $('#deepseek-key').value = ''; $('#settings-dialog').close(); renderModels(); renderSidebar(); toast('设置已保存');
+    $('#deepseek-key').value = ''; $('#settings-dialog').close(); state.models = defaultModels(); renderModels(); renderSidebar(); renderSetupNotice(); toast('设置已保存');
   } catch { $('#save-status').textContent = '保存失败，请检查输入后重试'; }
 });
 $('#delete-button').addEventListener('click', async () => {
@@ -713,7 +802,7 @@ async function init() {
   document.querySelectorAll('[data-icon]').forEach(el => { el.innerHTML = icon(el.dataset.icon); });
   renderTheme();
   try {
-    const data = await window.duet.init(); state.settings = data.settings; state.catalog = data.modelCatalog; state.local = data.conversations; applyCatalog(data); state.config = clone(data.settings.defaultModelConfig); state.researchConfig = clone(data.settings.defaultResearchConfig);
+    const data = await window.duet.init(); state.settings = data.settings; state.catalog = data.modelCatalog; state.local = data.conversations; applyCatalog(data); state.config = clone(data.settings.defaultModelConfig); state.researchConfig = clone(data.settings.defaultResearchConfig); state.models = defaultModels();
     const remembered = localStorage.getItem('duet-workspace'); if (state.workspaces.some(w => w.id === remembered)) state.selectedWorkspace = remembered;
     const expanded = state.selectedWorkspace === 'all' ? state.workspaces[0]?.id : state.selectedWorkspace; if (expanded) state.expanded.add(expanded);
     renderChat(); await refreshHistory();

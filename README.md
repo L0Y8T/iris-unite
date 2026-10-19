@@ -243,7 +243,7 @@ npm start                          # 开发运行，数据在 .local-data
 npm run diagram                    # 重新生成科研架构图
 npm run package                    # 打包到 build\IrisUnite-win32-x64
 
-npm test                           # 211 项逻辑测试，不联网、不调用模型
+npm test                           # 212 项逻辑测试，不联网、不调用模型
 npm run test:all                   # 全部 20 项验收，约 10–15 分钟（含真实模型调用）
 npm run test:all -- --skip-live    # 跳过真实模型调用，约 4 分钟
 npm run test:all -- --only=retry,exec-gate

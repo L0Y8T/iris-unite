@@ -89,7 +89,7 @@ node scripts/verify-fresh-clone.cjs
 
 ```bash
 npm run prepare:ui                       # 图标字体与本地 Markdown 渲染器
-npm test                                 # 211 项离线单测，fail 0 才算过
+npm test                                 # 212 项离线单测，fail 0 才算过
 node --test tests/platform.test.cjs      # 三平台分支与路径扫描
 npm run test:frontend                    # 界面 + axe（Linux 上要 xvfb-run）
 node tests/dsh-visual-check.cjs          # 明暗两套 axe 0 违规

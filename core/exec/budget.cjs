@@ -36,7 +36,9 @@ function evaluateBudget({ runs = [], conversationId = null, now = Date.now(), li
   const usedSeconds = Math.round(today.reduce((sum, item) => sum + Number(item.durationMs || 0) / 1000, 0));
 
   const checks = [
-    { key: 'conversation-runs', label: '本对话运行次数', used: mine.length, limit: merged.maxRunsPerConversation },
+    /* 没有打开的对话时「本对话运行次数」没有对象可数：早先的算法把全部历史都算进这一项，
+       于是独立运行（不挂对话）在累计 20 次之后会被无故拒绝。真正管住它的是下面两条每日额度。 */
+    ...(conversationId ? [{ key: 'conversation-runs', label: '本对话运行次数', used: mine.length, limit: merged.maxRunsPerConversation }] : []),
     { key: 'day-runs', label: '今日运行次数', used: today.length, limit: merged.maxRunsPerDay },
     { key: 'day-wall-clock', label: '今日执行时长（秒）', used: usedSeconds, limit: merged.maxWallClockSecPerDay }
   ].map(check => ({ ...check, ok: check.used < check.limit, remaining: Math.max(0, check.limit - check.used) }));
