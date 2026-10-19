@@ -1,5 +1,7 @@
 # Iris Unite
 
+[![CI](https://github.com/L0Y8T/iris-unite/actions/workflows/ci.yml/badge.svg)](https://github.com/L0Y8T/iris-unite/actions/workflows/ci.yml)
+
 一门面向**可核验科研**的桌面工作台：先检索真实文献建立资料库，再让多个模型在证据范围内推演、互相审查，最后把每一处引用逐个核对回资料库——指不回去的引用会被当场移除，而不是留在答案里充当真实出处。
 
 ![科研流程](docs/research-architecture.png)

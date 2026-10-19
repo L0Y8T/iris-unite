@@ -469,6 +469,24 @@ CI 的干净环境里那些文件不存在，只剩「未分组」一个，断�
 两个 CI 才暴露的问题（19.7 的超时挂死、19.8 的环境依赖）都不是平台适配的锅，是**只在异于开发机的环境里才显形**的那类缺陷——
 这正是三平台 CI 存在的意义：它替代不了真机点一遍，但能替代「我这儿是好的」。
 
+### 19.9 CI 从红到绿：五次修复
+
+仓库推上去之后，三平台 CI 连跑五轮才全绿。每一轮红的原因都不一样，而且**没有一个能在这台机器上复现**——
+这正是当初决定加 CI 的理由。
+
+| 轮次 | 现象 | 根因 | 修法 |
+| --- | --- | --- | --- |
+| 1 | 三个平台单元测试齐红，`Promise resolution is still pending` | `core/retrieval.cjs` 的超时定时器用了 `unref()`，测试进程里事件循环空掉后定时器不触发 | 超时改成 `Promise.race` 竞速兜底，去掉 `unref`（见 19.7） |
+| 2 | 界面回归红在 `workspaces.length > 1` | 工作区列表会读本机 Codex / DSH 的工作区文件，CI 干净环境里只剩「未分组」 | 测试自己写入两个工作区（见 19.8） |
+| 3 | Windows/macOS 红在 `ENOENT .test-data/v3-ui/conversations.json` | 测试读 `npm run test:ui` 的历史产物，而 CI 不跑那个（它花真钱） | 自己造一条 8 产出、5 阶段的协作记录 |
+| 4 | Ubuntu 直接 FATAL：`The SUID sandbox helper binary was found, but is not configured correctly` | CI 容器里 `chrome-sandbox` 没有 root:4755 | workflow 里设 `ELECTRON_DISABLE_SANDBOX=1`（桌面 Linux 正常安装不受影响） |
+| 5 | macOS 红在「一键导出与花费估算」 | 15 个 harness 都写死 `node_modules/electron/dist/electron.exe`；macOS 上是 `Electron.app/Contents/MacOS/Electron` | 统一用 `require('electron')` 返回的二进制路径，抽到 `tests/lib/electron-binary.cjs` |
+
+**第 5 条最值得记**：这不是「某个平台上的小毛病」，而是**测试自己不认识别的平台**。
+同一个错误在 15 个文件里各写了一遍，所以任何一次跨平台跑都会撞上——CI 只暴露了它一次，修的时候要一次改全。
+
+最终状态：`windows-latest` / `macos-latest` / `ubuntu-latest` 三个任务全绿，包含单元测试、平台分支检查、界面与 axe 回归、一键导出、花费估算。
+
 ### 19.6 没做的（不是遗漏，是没条件做）
 
 - **便携 Python 内置**（方案 D1 的 B 案）：要随包分发 `python-build-standalone`（+30–50 MB），且三平台的解释器包在 Windows 上没法验证。当前走「用户自备 Python + 明确提示」。
