@@ -21,6 +21,11 @@ jobs:
       fail-fast: false
       matrix:
         os: [windows-latest, macos-latest, ubuntu-latest]
+    env:
+      # Linux 的 CI 容器里 chrome-sandbox 没有 root:4755，Electron 会直接 FATAL 退出：
+      #   The SUID sandbox helper binary was found, but is not configured correctly
+      # 这是 CI 环境的限制，不是应用的问题；在桌面 Linux 上正常安装不会遇到。
+      ELECTRON_DISABLE_SANDBOX: '1'
     steps:
       - uses: actions/checkout@v4
 

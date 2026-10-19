@@ -90,10 +90,48 @@ exports.run = async (win, root, store) => {
   await until('document.querySelector("#settings-dialog").open'); await audit('light settings');
   await setTheme('dark'); await audit('dark settings');
   await js('document.querySelector("#settings-dialog .dialog-close").click()');
-  const data = JSON.parse(await fs.readFile(path.join(root, '.test-data/v3-ui/conversations.json'), 'utf8'));
-  const actual = data.conversations.find(c => c.messages.some(m => m.collaboration?.status === 'done' && m.collaboration.artifacts.length === 8));
-  assert.ok(actual, 'Use the completed real cooperative run from the prior integration test');
-  const copied = store.create({ title: actual.title, models: ['deepseek','gpt'], workspaceId: actual.workspaceId, cwd: actual.cwd, modelConfig: actual.modelConfig, messages: JSON.parse(JSON.stringify(actual.messages)) });
+  /* 自己造一条「双模型协作完成」的记录，不读外部测试数据。
+     原来这里读 .test-data/v3-ui/conversations.json —— 那是 npm run test:ui 的产物，
+     要先花真实模型调用跑一遍才存在。CI 上必然没有，于是这条断言在干净环境里永远过不去。 */
+  const now = Date.now();
+  const seededArtifacts = Array.from({ length: 8 }, (_, index) => ({
+    id: `artifact-${index + 1}`,
+    stage: 'writing',
+    stageLabel: `阶段 ${index + 1}`,
+    provider: index % 2 ? 'gpt' : 'deepseek',
+    model: index % 2 ? 'gpt-6.1-sol' : 'deepseek-flash',
+    effort: 'high',
+    kind: 'public-work',
+    status: 'done',
+    text: `第 ${index + 1} 份公开产出：结论与依据。`,
+    startedAt: now - (9 - index) * 1000,
+    finishedAt: now - (9 - index) * 1000 + 400
+  }));
+  const copied = store.create({
+    title: '协作记录（自造数据）',
+    models: ['deepseek', 'gpt'],
+    workspaceId: 'unassigned',
+    messages: [
+      { id: 'seed-user', role: 'user', text: '两个模型一起审一下这个方案', roundId: 'seed-round', timestamp: now - 30000 },
+      {
+        id: 'seed-answer', role: 'assistant', kind: 'answer', provider: 'deepseek', model: 'deepseek-flash',
+        text: '## 结论\n\n两个模型独立推演后给出同一方向。', status: 'done', roundId: 'seed-round', timestamp: now - 1000,
+        collaboration: {
+          version: 1, mode: 'collaborative', status: 'done', stage: 'completed', stageLabel: '已完成',
+          stages: [
+            { id: 'outline', label: '独立大纲', kind: 'model', phase: '推演' },
+            { id: 'review', label: '交叉审查', kind: 'model', phase: '推演' },
+            { id: 'synthesis', label: '综合大纲', kind: 'model', phase: '推演' },
+            { id: 'coordination', label: '模型统筹', kind: 'model', phase: '推演' },
+            { id: 'writing', label: '完整写作', kind: 'model', phase: '成文' }
+          ],
+          stageIndex: 1, totalStages: 5, completedTasks: 0, totalTasks: 2,
+          participants: [{ provider: 'deepseek', model: 'deepseek-flash', effort: 'high', role: '独立大纲' }], artifacts: seededArtifacts,
+          callsUsed: 8, callBudget: 8, startedAt: now - 20000, finishedAt: now - 1000
+        }
+      }
+    ]
+  });
   await js('refreshLocal()'); await js(`openThread(${JSON.stringify(copied.id)})`);
   await until('!!document.querySelector(".process-details")');
   assert.equal(await js('document.querySelector(".process-details").open'), false);
