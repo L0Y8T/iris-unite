@@ -221,6 +221,9 @@ function createToolbox({ workspace, capabilities = {} } = {}) {
       name: 'run_experiment',
       summary: '按模板真跑一次实验，返回带 sha256 的运行记录（E 编号由记录侧分配）。',
       permission: 'execute',
+      /* 它起子进程、吃 GPU、抢同一份运行目录与额度：同一时刻跑两个，测出来的数字互相污染，
+         而且第二个大概率因抢显存失败。执行器在 loop.cjs 里会给它单开一道屏障。 */
+      parallelSafe: false,
       params: {
         type: 'object',
         properties: {
@@ -293,7 +296,9 @@ function createToolbox({ workspace, capabilities = {} } = {}) {
   return {
     specs: options => registry.specs(options),
     invoke: (name, args, ctx) => registry.invoke(name, args, ctx),
-    has: name => registry.has(name)
+    has: name => registry.has(name),
+    /* 执行器要按 parallelSafe 分组调度，所以要能按名字查到注册项（含 execute 与 parallelSafe）。 */
+    get: name => registry.get(name)
   };
 }
 

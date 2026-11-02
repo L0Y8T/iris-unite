@@ -8,7 +8,7 @@ const {
 } = require('../core/harness/protocol.cjs');
 const { createRegistry, validateArgs, describeTools } = require('../core/harness/tools/registry.cjs');
 const { createToolbox } = require('../core/harness/tools/index.cjs');
-const { runAgentLoop } = require('../core/harness/loop.cjs');
+const { runAgentLoop, planBatches } = require('../core/harness/loop.cjs');
 const { openWorkspace } = require('../core/harness/workspace.cjs');
 const ids = require('../core/harness/ids.cjs');
 
@@ -314,4 +314,155 @@ test('buffer 模式不流式输出，只在最后一次性给出最终文本', a
     call: async ({ onText }) => onText('最终正文')
   });
   assert.deepEqual(seen, ['最终正文'], 'buffer 模式下中途不应有任何输出');
+});
+
+/* ---------- 并行安全屏障 ---------- */
+
+/* 造一个能控制耗时的工具箱：每个工具都往 log 里打开始/结束，并统计同时在跑的数量峰值。
+   unsafe 里的工具声明 parallelSafe:false，其余走注册表默认（安全）。 */
+function scriptedToolbox({ delays, unsafe = [] }) {
+  const log = [];
+  const state = { running: 0, peak: 0 };
+  const registry = createRegistry();
+  for (const [name, ms] of Object.entries(delays)) {
+    registry.define({
+      name,
+      parallelSafe: !unsafe.includes(name),
+      params: { type: 'object', properties: {}, additionalProperties: false },
+      async execute() {
+        state.running += 1;
+        state.peak = Math.max(state.peak, state.running);
+        log.push(`start:${name}`);
+        await new Promise(resolve => setTimeout(resolve, ms));
+        state.running -= 1;
+        log.push(`end:${name}`);
+        return { ok: true, result: `R-${name}` };
+      }
+    });
+  }
+  return {
+    log,
+    state,
+    box: {
+      specs: () => registry.specs(),
+      invoke: (name, args, ctx) => registry.invoke(name, args, ctx),
+      get: name => registry.get(name)
+    }
+  };
+}
+
+/* 跑一轮循环：第一轮把 names 全部作为一次请求的并发调用，第二轮收尾并截住回灌内容。 */
+async function runOneBurst(box, names) {
+  let replayed = '';
+  let round = 0;
+  const result = await runAgentLoop({
+    provider: 'deepseek', stage: 'x',
+    messages: [{ role: 'user', content: 'go' }],
+    toolbox: box,
+    call: async ({ messages, onText }) => {
+      round += 1;
+      if (round === 1) onText(fence({ calls: names.map(name => ({ name, args: {} })) }));
+      else { replayed = messages.at(-1).content; onText('done'); }
+    }
+  });
+  return { result, replayed };
+}
+
+const orderOf = (text, markers) => markers.map(marker => text.indexOf(marker));
+const assertAllPresent = (indexes, markers) => {
+  indexes.forEach((index, i) => assert.ok(index >= 0, `回灌里找不到 ${markers[i]}`));
+};
+const assertAscending = (indexes, markers) => {
+  for (let i = 1; i < indexes.length; i += 1) {
+    assert.ok(indexes[i] > indexes[i - 1], `顺序错了：${markers[i - 1]} 应排在 ${markers[i]} 之前`);
+  }
+};
+
+test('并行屏障：中间那个 parallelSafe:false 独占，前后两批各自并发并等它', async () => {
+  const { box, log, state } = scriptedToolbox({
+    delays: { a: 25, b: 25, solo: 25, c: 5, d: 5 },
+    unsafe: ['solo']
+  });
+  const { result, replayed } = await runOneBurst(box, ['a', 'b', 'solo', 'c', 'd']);
+
+  assert.equal(result.stoppedReason, 'final');
+  assert.equal(result.toolCalls.length, 5);
+  assert.equal(result.toolCalls.every(call => call.ok), true);
+
+  /* 前两个：都开始了才可能有人结束 → 确实并发。 */
+  assert.ok(log.indexOf('start:a') < log.indexOf('end:a'));
+  assert.ok(log.indexOf('start:b') < log.indexOf('end:a'), 'a 与 b 必须在同一批里并发');
+  assert.ok(log.indexOf('start:a') < log.indexOf('end:b'), 'a 与 b 必须在同一批里并发');
+
+  /* 屏障：solo 必须等 a、b 都结束之后才开始。 */
+  assert.ok(log.indexOf('start:solo') > log.indexOf('end:a'), 'solo 不能在 a 结束前开跑');
+  assert.ok(log.indexOf('start:solo') > log.indexOf('end:b'), 'solo 不能在 b 结束前开跑');
+
+  /* 后一批：必须等 solo 结束之后才开始。 */
+  assert.ok(log.indexOf('start:c') > log.indexOf('end:solo'), 'solo 后面的调用必须等它结束');
+  assert.ok(log.indexOf('start:d') > log.indexOf('end:solo'), 'solo 后面的调用必须等它结束');
+  assert.ok(log.indexOf('start:d') < log.indexOf('end:c'), 'c 与 d 属于同一批，应当并发');
+
+  assert.equal(state.peak, 2, '同批最多两个并发，solo 期间不允许有别人在跑');
+
+  /* 回灌顺序 = 调用顺序，与完成先后无关。 */
+  const markers = ['R-a', 'R-b', 'R-solo', 'R-c', 'R-d'];
+  const indexes = orderOf(replayed, markers);
+  assertAllPresent(indexes, markers);
+  assertAscending(indexes, markers);
+});
+
+test('并行屏障：全部安全时结果确实并发跑，且完成顺序不会打乱回灌顺序', async () => {
+  /* 耗时递减：完成顺序会是 fast → mid → slow，与调用顺序相反，正好用来验证回灌排序。 */
+  const { box, state } = scriptedToolbox({ delays: { slow: 40, mid: 20, fast: 2 } });
+  const { result, replayed } = await runOneBurst(box, ['slow', 'mid', 'fast']);
+
+  assert.equal(result.toolCalls.length, 3);
+  assert.equal(state.peak, 3, '三个安全工具应当同时开跑');
+  assert.deepEqual(result.toolCalls.map(call => call.name), ['fast', 'mid', 'slow'],
+    '完成顺序按耗时来，说明确实是并发');
+
+  const markers = ['R-slow', 'R-mid', 'R-fast'];
+  const indexes = orderOf(replayed, markers);
+  assertAllPresent(indexes, markers);
+  assertAscending(indexes, markers);
+  assert.match(replayed, /\[1\] slow/);
+  assert.match(replayed, /\[3\] fast/);
+});
+
+test('并行屏障：分组规则本身（连续安全成批、不安全独占）', () => {
+  const calls = ['x', 'y', 'solo', 'solo2', 'z'].map(name => ({ name, args: {} }));
+  const batches = planBatches(calls, name => !name.startsWith('solo'));
+  assert.equal(batches.length, 4);
+  assert.deepEqual(batches.map(batch => batch.concurrent), [true, false, false, true]);
+  assert.deepEqual(batches.map(batch => batch.entries.map(entry => entry.index)),
+    [[0, 1], [2], [3], [4]], '批次必须记住原始下标，否则回灌排序无从还原');
+
+  assert.deepEqual(planBatches([], () => true), []);
+  const allSafe = planBatches(calls, () => true);
+  assert.equal(allSafe.length, 1, '全安全时只需要一批');
+  assert.deepEqual(allSafe[0].entries.map(entry => entry.index), [0, 1, 2, 3, 4]);
+});
+
+test('并行安全声明：注册处默认 true，run_experiment 显式 false，specs() 不外泄这个字段', () => {
+  const registry = createRegistry();
+  registry.define({ name: 'plain', execute: async () => ({ ok: true }) });
+  registry.define({ name: 'guarded', parallelSafe: false, execute: async () => ({ ok: true }) });
+  assert.equal(registry.get('plain').parallelSafe, true, '默认必须安全，否则现有工具全被降级成串行');
+  assert.equal(registry.get('guarded').parallelSafe, false);
+  for (const spec of registry.specs()) {
+    assert.ok(!('parallelSafe' in spec), `specs() 不该把执行语义泄露给模型：${spec.name}`);
+    assert.ok(!('execute' in spec), 'specs() 也不该带执行器');
+  }
+
+  /* 真工具箱：只有 run_experiment 是不安全的。 */
+  const ws = makeWorkspace(tempRoot());
+  const box = createToolbox({
+    workspace: ws,
+    capabilities: { runExperiment: async () => ({ runId: 'r1', status: 'done', metrics: { m: 1 } }) }
+  });
+  assert.equal(box.get('run_experiment').parallelSafe, false, '跑实验会抢 GPU 与运行目录，不能并跑');
+  assert.equal(box.get('read_artifact').parallelSafe, true);
+  assert.equal(box.get('write_note').parallelSafe, true);
+  assert.ok(box.specs().every(spec => !('parallelSafe' in spec)));
 });

@@ -101,6 +101,11 @@ function createRegistry() {
       summary: spec.summary || '',
       params: spec.params || { type: 'object', properties: {} },
       permission,
+      /* 并行安全性由注册处声明，不由调用处猜。
+         默认 true：现有工具要么只读工作区、要么写入即产生新的不可变产物，同批并发不会互相踩。
+         显式写 false 的工具（起子进程、吃 GPU、抢占同一份可变状态）执行时会被单独放进屏障里跑。
+         这是执行语义，不是给模型看的说明，所以 specs() 不暴露它。 */
+      parallelSafe: spec.parallelSafe !== false,
       execute: spec.execute
     });
     return spec.name;
@@ -117,7 +122,9 @@ function createRegistry() {
   function specs({ allow } = {}) {
     const all = [...tools.values()];
     const visible = allow ? all.filter(spec => allow.includes(spec.name)) : all;
-    return visible.map(({ execute, ...rest }) => rest);
+    /* parallelSafe 是执行语义，剔除后不再出现在提示词里：模型不需要知道调度细节，
+       而且它一旦看见这个字段，就会开始为"怎么并行"写理由，那是调度器的事。 */
+    return visible.map(({ execute, parallelSafe, ...rest }) => rest);
   }
 
   /**

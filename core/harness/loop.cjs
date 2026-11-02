@@ -10,6 +10,8 @@
  *   2. 循环有硬上限，且最后一步会明说"这是最后一轮"——不给通牒的迭代上限，
  *      模型会用全部额度继续查资料，最后一步都没写。
  *   3. 工具结果回灌前先截断。单个结果把上下文撑爆，是工具循环最常见的死法。
+ *   4. 并行不是无条件的。工具在注册处声明 parallelSafe，执行时按声明切批次：
+ *      安全的一批并发，不安全的一道屏障独占。见 planBatches。
  */
 const {
   ToolSniffer, parseToolCalls, stripToolBlocks, renderToolResults
@@ -50,6 +52,38 @@ function trimResult(results, maxChars) {
       }
     };
   });
+}
+
+/**
+ * 把一次模型请求的调用序列切成执行批次。
+ *
+ * 规则（连续安全的一批并发，不安全的独占一道屏障）：
+ *   连续 parallelSafe:true  → 攒成一批，批内并发；
+ *   parallelSafe:false      → 前面那批先全部跑完，它自己单独跑，后面那批再等它跑完；
+ *   返回的批之间必须串行执行。
+ *
+ * 批次只决定"什么时候跑"，不决定"怎么回报"：调用方按 index 把结果放回原位置，
+ * 所以回灌给模型的顺序永远等于模型给出的调用顺序。
+ *
+ * isSafe(name) 由调用方注入：注册表里没有这个工具（模型写错名字）时也算安全，
+ * 因为那种调用瞬间返回失败，不存在竞态。
+ */
+function planBatches(calls, isSafe = () => true) {
+  const batches = [];
+  let open = null;
+  calls.forEach((item, index) => {
+    if (isSafe(item.name)) {
+      if (!open) {
+        open = { concurrent: true, entries: [] };
+        batches.push(open);
+      }
+      open.entries.push({ item, index });
+      return;
+    }
+    open = null;
+    batches.push({ concurrent: false, entries: [{ item, index }] });
+  });
+  return batches;
 }
 
 /**
@@ -151,11 +185,21 @@ async function runAgentLoop({
       return { text, steps: step, toolCalls, stoppedReason: 'final' };
     }
 
-    /* 执行工具。并行是安全的：每个工具要么只读工作区，要么写入即产生新的不可变产物。 */
+    /* 执行工具：按 parallelSafe 分组调度，别处不加锁。
+       安全的工具（只读工作区，或写入即产生新的不可变产物）批内并发；
+       声明了 parallelSafe:false 的（起子进程、吃 GPU、改共享状态）独占一道屏障，
+       它前后两批都必须等它结束——否则"读产物 + 跑实验 + 写笔记"三件一起来时，
+       笔记可能读到实验写到一半的运行记录。 */
     onEvent({ kind: 'step', step, chars: full.length, tools: calls.map(item => item.name) });
     if (ledger) ledger.append('loop.tools', { provider, stage, step, names: calls.map(item => item.name), chars: full.length });
 
-    const executed = await Promise.all(calls.map(async item => {
+    const isParallelSafe = name => {
+      if (!toolbox || typeof toolbox.get !== 'function') return true;
+      const spec = toolbox.get(name);
+      return !spec || spec.parallelSafe !== false;
+    };
+
+    const runOne = async ({ item, index }) => {
       const at = Date.now();
       let result;
       try {
@@ -175,8 +219,21 @@ async function runAgentLoop({
         provider, stage, step, name: item.name, ok: !!(result && result.ok), ms: record.ms,
         error: result && !result.ok ? String(result.error).slice(0, 300) : undefined
       });
-      return record;
-    }));
+      return { index, record };
+    };
+
+    /* 结果按原始下标落位：并发完成的先后顺序绝不能渗进回灌顺序，
+       否则模型读到的 [1][2][3] 与它写的调用顺序对不上，引用错乱会一路传到结论里。 */
+    const executed = new Array(calls.length);
+    for (const batch of planBatches(calls, isParallelSafe)) {
+      if (batch.concurrent) {
+        const done = await Promise.all(batch.entries.map(runOne));
+        for (const { index, record } of done) executed[index] = record;
+      } else {
+        const { index, record } = await runOne(batch.entries[0]);
+        executed[index] = record;
+      }
+    }
 
     conversation.push({ role: 'assistant', content: stripToolBlocks(full) || '（调用工具）' });
     conversation.push({ role: 'user', content: renderToolResults(trimResult(executed, bound.resultChars)) });
@@ -193,4 +250,4 @@ async function runAgentLoop({
   return { text: '', steps: maxSteps, toolCalls, stoppedReason: 'max-steps' };
 }
 
-module.exports = { runAgentLoop, DEFAULT_LIMITS, LAST_CALL_NOTICE, trimResult };
+module.exports = { runAgentLoop, planBatches, DEFAULT_LIMITS, LAST_CALL_NOTICE, trimResult };
