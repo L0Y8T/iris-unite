@@ -106,6 +106,12 @@ function createRegistry() {
          显式写 false 的工具（起子进程、吃 GPU、抢占同一份可变状态）执行时会被单独放进屏障里跑。
          这是执行语义，不是给模型看的说明，所以 specs() 不暴露它。 */
       parallelSafe: spec.parallelSafe !== false,
+      /* 要不要人点头，也由注册处声明。
+         默认 false：绝大多数工具只读或只写本地产物，中途弹窗只会训练用户无脑点"允许"。
+         显式写 true 的工具（花真钱、占真机器、跑不可回滚的东西）执行前必须先拿到允许，
+         没有确认通道就当作拒绝——见 loop.cjs。同样是执行语义，specs() 也不暴露：
+         模型不需要知道"会不会弹窗"，知道自己没被允许就够了。 */
+      requiresConfirmation: spec.requiresConfirmation === true,
       execute: spec.execute
     });
     return spec.name;
@@ -122,9 +128,10 @@ function createRegistry() {
   function specs({ allow } = {}) {
     const all = [...tools.values()];
     const visible = allow ? all.filter(spec => allow.includes(spec.name)) : all;
-    /* parallelSafe 是执行语义，剔除后不再出现在提示词里：模型不需要知道调度细节，
-       而且它一旦看见这个字段，就会开始为"怎么并行"写理由，那是调度器的事。 */
-    return visible.map(({ execute, parallelSafe, ...rest }) => rest);
+    /* parallelSafe 与 requiresConfirmation 都是执行语义，剔除后不再出现在提示词里：
+       模型不需要知道调度细节与弹窗细节，它一旦看见这些字段，就会开始为"怎么并行"、
+       "能不能绕过确认"写理由，那是调度器与确认闸的事。 */
+    return visible.map(({ execute, parallelSafe, requiresConfirmation, ...rest }) => rest);
   }
 
   /**

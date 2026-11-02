@@ -2,6 +2,7 @@ const { randomUUID } = require('node:crypto');
 const { contextFor } = require('./providers.cjs');
 const { isCustomProvider } = require('./connections.cjs');
 const { assemble } = require('./harness/context.cjs');
+const { historyFor } = require('./harness/compaction.cjs');
 const STAGES = [
   { id: 'outline', label: '独立大纲' }, { id: 'review', label: '交叉审查' },
   { id: 'synthesis', label: '综合大纲' }, { id: 'coordination', label: 'GPT 统筹' }, { id: 'writing', label: '完整写作' }
@@ -39,13 +40,16 @@ function flattenParts(data, prefix = '') {
   }
   return parts;
 }
-async function runCollaboration({ conversation, participants, run, signal, call, onChange = () => {}, onFinal = () => {}, workspace = null }) {
+async function runCollaboration({ conversation, participants, run, signal, call, onChange = () => {}, onFinal = () => {}, workspace = null, summarize = null }) {
   if (!Array.isArray(participants) || !participants.length || participants.some(p => !['deepseek', 'gpt'].includes(p) && !isCustomProvider(p))) throw new Error('至少使用一个有效模型');
   const coordinator = participants.includes('gpt') ? 'gpt' : participants[0];
   const failureController = new AbortController();
   const callSignal = AbortSignal.any([signal, failureController.signal]);
   const question = [...conversation.messages].reverse().find(m => m.role === 'user')?.text || '';
-  const history = contextFor(conversation);
+  /* 历史压缩：注入了 summarize 才启用，否则与 1.0 行为完全一致。 */
+  const history = summarize
+    ? await historyFor(conversation, { summarize, emit: event => onChange(event), workspace, run })
+    : contextFor(conversation);
   const emit = event => onChange(event);
   const ensureActive = () => { if (callSignal.aborted) throw new Error('已停止生成'); };
   function stage(id, totalTasks) {

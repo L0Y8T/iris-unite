@@ -224,6 +224,9 @@ function createToolbox({ workspace, capabilities = {} } = {}) {
       /* 它起子进程、吃 GPU、抢同一份运行目录与额度：同一时刻跑两个，测出来的数字互相污染，
          而且第二个大概率因抢显存失败。执行器在 loop.cjs 里会给它单开一道屏障。 */
       parallelSafe: false,
+      /* 十件工具里只有这一件花真钱、占真机器，且跑完不可回滚——所以只有它要人点头。
+         exec/budget.cjs 的日限额是事后兜底，等它拦住时钱已经花出去了。 */
+      requiresConfirmation: true,
       params: {
         type: 'object',
         properties: {
@@ -235,7 +238,10 @@ function createToolbox({ workspace, capabilities = {} } = {}) {
         additionalProperties: false
       },
       async execute({ template, params = {}, label }, ctx = {}) {
-        const manifest = await capabilities.runExperiment({ template, params, label, signal: ctx.signal });
+        /* 键名要对齐调用方的解构：main.cjs 的 experimentTools.run 收的是 templateId。
+           这里传 template 的话，真机路径上 templateById(undefined) 会抛
+           「未知的实验模板：undefined」——工具永远失败，而单元测试用假执行器发现不了。 */
+        const manifest = await capabilities.runExperiment({ templateId: template, params, label, signal: ctx.signal });
         const summary = manifest && manifest.metrics
           ? Object.fromEntries(Object.entries(manifest.metrics).slice(0, 12))
           : null;

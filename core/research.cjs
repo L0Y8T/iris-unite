@@ -25,6 +25,8 @@ const { createToolbox } = require('./harness/tools/index.cjs');
 const { renderProtocol } = require('./harness/protocol.cjs');
 const { runAgentLoop } = require('./harness/loop.cjs');
 const { summarize } = require('./harness/workspace.cjs');
+/* 1.1：历史压缩。注入 summarize 才启用，否则与 1.0 行为完全一致。 */
+const { historyFor } = require('./harness/compaction.cjs');
 /* 1.1 阶段准入：环节一产出就挂起来，推进到下一环节之前先过机械检查。
    默认关闭（config.harness.gates === true 才启用），不改动既有的事后门禁。 */
 const { DEFAULT_GATES, runGates, GATE_FAILED } = require('./harness/gates.cjs');
@@ -437,7 +439,7 @@ function knowledgeBlock(knowledge, { limit = 36, abstractChars = 500 } = {}) {
 
 const ANTI_FABRICATION = '禁止编造文献、DOI、arXiv 号、检索结果、实验或数据。任何文献引用只能使用「资料库」里出现过的键（如 S3）；实验数字只能来自「已完成的实验运行」清单里列出的指标，并按 [E1] 形式标注来源；这两份材料里没有的内容只能明确写成待核验假设或证据缺口，不得伪造出处。证据不足时应当说明不足，而不是补一个像真的引用。';
 
-async function runResearch({ conversation, config, run, signal, call, onChange = () => {}, onFinal = () => {}, retrieve, knowledge, citation, monitor, experimentRuns = [], experimentReference = null, verifyExperiments = null, experimentTools = null, workspace = null }) {
+async function runResearch({ conversation, config, run, signal, call, onChange = () => {}, onFinal = () => {}, retrieve, knowledge, citation, monitor, experimentRuns = [], experimentReference = null, verifyExperiments = null, experimentTools = null, workspace = null, confirm = null, summarize = null }) {
   assertRunnable(config);
   const configPlan = planner.compileConfigPlan(config);
   const { active: plannedNodes, skipped: plannedSkips } = planner.activeNodes(configPlan, config);
@@ -446,7 +448,12 @@ async function runResearch({ conversation, config, run, signal, call, onChange =
   const ledger = createLedger({ limit: configPlan.maxCalls, reserve: configPlan.reserve });
   const sibling = new AbortController();
   const combined = AbortSignal.any([signal, sibling.signal]);
-  const history = contextFor(conversation);
+  /* 历史压缩：注入了 summarize 才启用，否则原样用 contextFor（既有行为零变化）。
+     注意 historyFor 内部先取未截断的全量消息再压——先 contextFor 再压等于永远不超预算，
+     压缩就成了空转（和"材料太小，装配预算等于没设"是同一课）。 */
+  const history = summarize
+    ? await historyFor(conversation, { summarize, emit: onChange, workspace, run })
+    : contextFor(conversation);
   const question = [...conversation.messages].reverse().find(m => m.role === 'user')?.text || '';
   const emit = onChange;
   let finalText = '';
@@ -654,7 +661,10 @@ async function runResearch({ conversation, config, run, signal, call, onChange =
     return caps;
   }
 
-  async function requestWithTools(selected, prompt, buildParts, { task = null, maxSteps = 6 } = {}) {
+  /* confirm 一路透传到 agent 循环：花钱的工具（run_experiment）执行前要人点头。
+     这里不加自己的默认值——默认值住在 loop.cjs（没传就拒绝），
+     研究编排层如果替它补一个"总是允许"，确认闸就形同虚设。 */
+  async function requestWithTools(selected, prompt, buildParts, { task = null, maxSteps = 6, confirm: askPermission = null } = {}) {
     active();
     const attemptId = ledger.reserveSlot(run.stage, { required: true, note: task?.title || '' });
     ledger.dispatch(attemptId);
@@ -698,6 +708,8 @@ async function runResearch({ conversation, config, run, signal, call, onChange =
             }
           }
           : null,
+        /* 确认通道：只有 run_experiment 会用到它。没注入时循环侧按拒绝处理。 */
+        confirm: askPermission,
         onEvent: event => {
           run.lastActivityAt = Date.now();
           emit({ kind: 'tool', step: event.step, name: event.name, ok: event.ok, ms: event.ms, args: event.args, error: event.error, chars: event.chars });
@@ -1234,7 +1246,7 @@ async function runResearch({ conversation, config, run, signal, call, onChange =
     /* 1.0 harness 路径：材料走装配、模型可调工具按需读取。
        注入工作区才启用；没有工作区时走 0.6 的老路径，行为完全一致。 */
     if (workspace && config?.harness?.tools !== false) {
-      finalText = await requestWithTools(config.choices.final, finalPrompt, () => finalParts(finalMaterials));
+      finalText = await requestWithTools(config.choices.final, finalPrompt, () => finalParts(finalMaterials), { confirm });
     } else {
       finalText = await request(config.choices.final, finalPrompt, finalMaterials, { final: true });
     }

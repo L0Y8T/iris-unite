@@ -4,7 +4,7 @@
  * 模型读完材料就写，写完这条路就走完了（core/collaboration.cjs、core/research.cjs 全部如此）。
  * 有了这个循环，模型才能先看有什么产物、再读需要的那个、再跑一次实验、最后才写结论。
  *
- * 三条设计约束：
+ * 五条设计约束：
  *   1. 与现有 call 接口签名完全兼容（{provider, stage, messages, signal, onText, outputSchema}），
  *      所以 main.cjs 里那个 call 适配器一行都不用改就能接上。
  *   2. 循环有硬上限，且最后一步会明说"这是最后一轮"——不给通牒的迭代上限，
@@ -12,6 +12,8 @@
  *   3. 工具结果回灌前先截断。单个结果把上下文撑爆，是工具循环最常见的死法。
  *   4. 并行不是无条件的。工具在注册处声明 parallelSafe，执行时按声明切批次：
  *      安全的一批并发，不安全的一道屏障独占。见 planBatches。
+ *   5. 花钱的动作要人点头。工具在注册处声明 requiresConfirmation，执行前先过确认闸；
+ *      没有确认通道就当作拒绝。见 runOne。
  */
 const {
   ToolSniffer, parseToolCalls, stripToolBlocks, renderToolResults
@@ -23,6 +25,12 @@ const DEFAULT_LIMITS = {
   /* 单个工具结果回灌的字符上限。超出就截断并提示续读。 */
   resultChars: 8000
 };
+
+/* 拒绝后回灌给模型的话。三个要点缺一不可：
+   ① 说清是被谁拒的（否则模型会以为工具坏了，换个参数再试一遍）；
+   ② 明确禁止重试（同一件事被试三次，等于用花式参数骚扰用户点三次"允许"）；
+   ③ 给出替代路径（不跑实验也要交结论，否则这一轮就没产出）。 */
+const CONFIRM_DENIED_TEXT = '用户拒绝了这次执行。不要重复尝试，改为在结论里说明未跑实验。';
 
 const LAST_CALL_NOTICE = [
   '【最后通牒】',
@@ -98,6 +106,10 @@ function planBatches(calls, isSafe = () => true) {
  *   { kind: 'step', step, chars }            一轮开始/结束
  *   { kind: 'tool', step, name, args, ok, ms, chars }
  *   { kind: 'tool-error', step, error }      协议解析失败，已回灌纠错
+ *
+ * confirm 由调用方注入，形状 async ({ name, args, permission }) => boolean：
+ *   允许返回 true，其余一律当拒绝。没注入 confirm 就是拒绝——没有确认通道时，
+ *   "默认放行"等于把危险动作的开关交给了忘记注入的人。
  */
 async function runAgentLoop({
   provider,
@@ -108,6 +120,7 @@ async function runAgentLoop({
   limits = {},
   signal,
   ledger = null,
+  confirm = null,
   onEvent = () => {},
   onText = () => {},
   outputSchema = null,
@@ -199,13 +212,55 @@ async function runAgentLoop({
       return !spec || spec.parallelSafe !== false;
     };
 
+    /* 要不要问人，只看注册处的声明。注册表里查不到（模型写错名字）时不问：
+       那种调用瞬间返回失败，压根没有副作用可言。 */
+    const needsConfirm = name => {
+      if (!toolbox || typeof toolbox.get !== 'function') return false;
+      const spec = toolbox.get(name);
+      return !!(spec && spec.requiresConfirmation === true);
+    };
+
+    /* 确认闸。位置很关键：在 toolbox.invoke 之前、在批内——拒绝时副作用一次都不会发生，
+       而分批逻辑一行都不用动（确认不改变"什么时候跑"，只决定"跑不跑"）。
+       四种情况全按拒绝处理：没注入 confirm、confirm 返回非 true、confirm 自己抛错、
+       等点头期间用户按了停止。宁可这一轮少跑一次实验，也不能偷偷跑。 */
+    const askPermission = async item => {
+      if (!needsConfirm(item.name)) return true;
+      const at = Date.now();
+      let allowed = false;
+      if (typeof confirm === 'function') {
+        try {
+          allowed = (await confirm({
+            name: item.name,
+            args: item.args,
+            permission: (toolbox.get(item.name) || {}).permission || 'execute'
+          })) === true;
+        } catch (failure) {
+          /* 确认通道自己坏了（窗口已销毁、对话框抛错）：没有点头就是没有点头。 */
+          allowed = false;
+        }
+      }
+      if (signal && signal.aborted) allowed = false;
+      /* 记账本：被拒的调用必须留痕。事后问"这轮为什么没跑实验"时，
+         账本里要能看见是模型没申请、还是用户拒绝了，两者是完全不同的故障。 */
+      if (ledger) ledger.append('tool.confirm', { provider, stage, step, name: item.name, allowed, ms: Date.now() - at });
+      return allowed;
+    };
+
     const runOne = async ({ item, index }) => {
       const at = Date.now();
       let result;
-      try {
-        result = await toolbox.invoke(item.name, item.args, { signal });
-      } catch (failure) {
-        result = { ok: false, error: String(failure && failure.message ? failure.message : failure) };
+      /* 确认先于执行：这一步只要被拒，invoke 一次都不会被碰到。 */
+      if (await askPermission(item)) {
+        try {
+          result = await toolbox.invoke(item.name, item.args, { signal });
+        } catch (failure) {
+          result = { ok: false, error: String(failure && failure.message ? failure.message : failure) };
+        }
+      } else {
+        /* 拒绝是正常路径，不是异常：回灌一句话让模型改路线，循环继续走。
+           这里不抛错——抛出去会让整轮科研报废，而用户点"拒绝"通常只是不想花这笔钱。 */
+        result = { ok: false, denied: true, error: CONFIRM_DENIED_TEXT };
       }
       const record = { name: item.name, args: item.args, result, ms: Date.now() - at };
       toolCalls.push({ step, name: item.name, args: item.args, ok: !!(result && result.ok), ms: record.ms });
@@ -250,4 +305,4 @@ async function runAgentLoop({
   return { text: '', steps: maxSteps, toolCalls, stoppedReason: 'max-steps' };
 }
 
-module.exports = { runAgentLoop, planBatches, DEFAULT_LIMITS, LAST_CALL_NOTICE, trimResult };
+module.exports = { runAgentLoop, planBatches, DEFAULT_LIMITS, LAST_CALL_NOTICE, CONFIRM_DENIED_TEXT, trimResult };

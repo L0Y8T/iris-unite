@@ -122,6 +122,79 @@ const sendEvent = payload => {
   if (win && !win.isDestroyed()) win.webContents.send('duet:event', payload);
 };
 
+/* ── 确认闸 ───────────────────────────────────────────────────────
+   模型要花真钱、占真机器之前，先让用户点一下头。用原生对话框而不是渲染层 UI：
+   后者要动 IPC、前端状态与 CSS，还得重跑整套界面审计，功能却一模一样。
+   这一层只负责"问人"，不问"该不该问"——要不要确认由工具在注册处声明
+   （core/harness/tools/registry.cjs 的 requiresConfirmation），闸门在 core/harness/loop.cjs。
+   放在 main.cjs 是因为 Electron 的 dialog 只有主进程能用。
+   所有非明确允许的情形一律当拒绝：没有窗口、五分钟没人理、对话框自己抛错、窗口被关。 */
+const CONFIRM_TIMEOUT_MS = 5 * 60 * 1000;
+
+/** 把模型给的工具参数摊成人话。参数原文照抄，不美化——用户要判断的是"它到底要跑什么"。
+    返回 { templateName, detail }：模板名进对话框主文案，其余进详情。 */
+function describeExperimentRequest(args = {}) {
+  const { template, params = {}, label } = args;
+  let templateName = template ? String(template) : '（模型没有指定模板）';
+  let timeoutHint = '预计超时：未知（模板 id 不在内置清单里）';
+  try {
+    const found = execTemplates.templateById(template);
+    templateName = `${found.name}（${found.id}）`;
+    const defaultSec = found.timeoutSec && found.timeoutSec.default;
+    if (defaultSec) timeoutHint = `预计超时：最长 ${(Math.round(defaultSec / 6) / 10)} 分钟（${defaultSec} 秒）`;
+  } catch { /* 模板 id 不认识：照样弹窗，让用户看见原始 id 自己决定 */ }
+  const shown = Object.entries(params || {}).length
+    ? Object.entries(params).map(([key, value]) => `${key}=${JSON.stringify(value)}`).join('，')
+    : '（全部用默认值）';
+  const detail = [
+    label ? `展示名：${label}` : '',
+    `参数：${shown}`,
+    timeoutHint,
+    '允许后会在本机起子进程真跑：占 CPU/GPU，消耗今天的实验额度，跑失败了也不一定回滚。'
+  ].filter(Boolean).join('\n');
+  return { templateName, detail };
+}
+
+/** 返回 true 仅当用户明确点了"允许"。 */
+function askRunExperimentPermission({ name, args, permission } = {}) {
+  return new Promise(resolve => {
+    let settled = false;
+    let timer = null;
+    const finish = allowed => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      try { if (win && !win.isDestroyed()) win.removeListener('closed', onClosed); } catch { /* 窗口已经没了 */ }
+      resolve(allowed === true);
+    };
+    /* 窗口关了就等于"不看了"：对话框挂在窗口上，窗口没了它也不会再回来。
+       不接这个事件的话，这里有 5 分钟挂死的可能。 */
+    const onClosed = () => finish(false);
+    if (!win || win.isDestroyed()) return finish(false);
+    /* 弹之前先把窗口推到前面。否则最常见的情况不是"用户拒绝"，而是"用户根本没看见有个框在等他"。 */
+    try { if (win.isMinimized()) win.restore(); win.show(); win.focus(); } catch { /* 拿不到焦点也继续弹 */ }
+    win.once('closed', onClosed);
+    /* 超时按拒绝。不是 Promise.race 而是显式定时器：答完就把定时器撤掉，
+       不会留下一个还在跑的 race 分支，也不会让"谁赢了"取决于事件循环的偶然顺序。 */
+    timer = setTimeout(() => finish(false), CONFIRM_TIMEOUT_MS);
+    if (timer.unref) timer.unref();
+    const { templateName, detail } = describeExperimentRequest(args);
+    dialog.showMessageBox(win, {
+      type: 'question',
+      buttons: ['允许', '拒绝'],
+      defaultId: 1,
+      cancelId: 1,
+      noLink: true,
+      title: '模型要运行实验',
+      message: `${templateName}（工具 ${name || 'run_experiment'}，权限 ${permission || 'execute'}）`,
+      detail
+    }).then(({ response }) => finish(response === 0), error => {
+      console.error('确认对话框失败，按拒绝处理：', error && error.message);
+      finish(false);
+    });
+  });
+}
+
 /* ── 实验运行的状态与索引 ───────────────────────────────────────────
    运行中状态只在内存；每次运行的完整记录落在 run 目录的 manifest.json，
    索引文件只存摘要（列表用），最多 300 条。 */
@@ -658,12 +731,35 @@ async function sendTurn(id, text, { appendUser = true, retryOf = null, resumeFro
           conversation: context, participants, config: researchConfig, run: collaboration, signal: controller.signal,
           /* 运行工作区：产物落盘的落点。缺省为 null 时行为与 0.6 完全一致。 */
           workspace: harnessWorkspace,
+          /* 历史压缩的摘要器：只在历史真的超过 24 万字符时才会被调用一次。
+             用最便宜的通道（deepseek + off）——不花这一次，就要在之后每一次请求里
+             重复带上整段历史。注意它直接走 providers，不经过 call 适配器，
+             所以这次调用的 token 不计入本轮 usage（摘要本身很便宜，宁可少算也不虚报）。 */
+          summarize: async transcript => {
+            const text = String(transcript || '').trim();
+            if (!text) return '';
+            let summary = '';
+            await providers.runDeepseek({
+              settings: { deepseekModel: 'deepseek-flash', deepseekEffort: 'off' },
+              key: providers.deepseekKey(snapshot, decrypt).key,
+              signal: controller.signal,
+              messages: [{
+                role: 'user',
+                content: `把下面这段对话压缩成不超过 600 字的摘要。保留：已确定的结论、关键数字与出处、尚未解决的问题、用户明确要求过的约束。去掉寒暄、过程叙述与重复内容。只输出摘要正文，不要加标题。\n\n${text}`
+              }],
+              onText: chunk => { summary += chunk; }
+            });
+            return summary.trim();
+          },
           ...(researchConfig ? {
             // 真实检索：不加任何密钥，走公开学术接口。联系人邮箱用于 OpenAlex 的礼貌池，可选。
             retrieve: ({ query, sources, limit, yearFrom, signal }) => retrieval.search({ query, sources, limit, yearFrom, signal, contact: settings.retrievalContact || process.env.IRIS_RETRIEVAL_CONTACT || undefined }),
             knowledge,
             citation,
             monitor,
+            /* 确认闸：模型调 run_experiment 时弹原生对话框，五分钟没人理按拒绝。
+               只有研究模式会带工具循环，所以只在这里注入。 */
+            confirm: askRunExperimentPermission,
             /* 本对话已完成的实验运行：既用于给模型提供可引用的事实，也用于发布前核对数字。
                没有运行记录时 referenceBlock 会明确写出"不得出现实验数字"。 */
             experimentRuns: researchRuns,
