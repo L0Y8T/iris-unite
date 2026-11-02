@@ -193,7 +193,9 @@ exports.run = async (win, root, store) => {
   } else {
     console.log('[skip] iris-ui-check（真实模型联调）未执行：设置 IRIS_LIVE_TEST=1 才运行。');
   }
-  win.setMinimumSize(320, 560);
+  /* 下限设成 400 而不是 560：窗口适配在极小屏（工作区 560 高）时会把 minHeight 压到 536，
+     如果这里用 560 挡着，就永远测不到真实的下限。 */
+  win.setMinimumSize(320, 400);
   const widths = [1440,1024,768,320];
   for (const width of widths) {
     win.setSize(width, 900); await delay(250);
@@ -205,6 +207,37 @@ exports.run = async (win, root, store) => {
       await js('document.querySelector("#expand-sidebar").click()'); assert.ok(await js('document.body.classList.contains("sidebar-open")'));
       await js('document.querySelector("#sidebar-scrim").click()'); assert.ok(await js('document.querySelector(".sidebar").inert'));
     }
+  }
+  /* 高度矩阵：以前只测过 900 这一档高度，而窗口自适应会把高度压到 660 甚至更低
+     （高 DPI 下工作区本来就只有 600 多）。窗口放得下不等于界面能用——
+     输入框和发送按钮必须仍然在视口内，否则用户根本发不出消息。 */
+  const viewports = [
+    [1380, 841], [1536, 912], [1366, 669], [1280, 672],
+    [1024, 600], [900, 560], [800, 536], [1280, 536], [1024, 480]
+  ];
+  const viewportProbes = [];
+  for (const [width, height] of viewports) {
+    win.setSize(width, height); await delay(250);
+    const probe = await js(`(() => {
+      const box = el => { const r = el && el.getBoundingClientRect(); return r ? { top: Math.round(r.top), bottom: Math.round(r.bottom), left: Math.round(r.left), right: Math.round(r.right) } : null; };
+      const send = box(document.querySelector('#send-button'));
+      const prompt = box(document.querySelector('#prompt'));
+      return {
+        w: innerWidth, h: innerHeight,
+        scrollW: document.documentElement.scrollWidth,
+        scrollH: document.documentElement.scrollHeight,
+        send, prompt,
+        sendUsable: !!send && send.bottom <= innerHeight + 1 && send.top >= 0 && send.right <= innerWidth + 1,
+        promptUsable: !!prompt && prompt.bottom <= innerHeight + 1 && prompt.top >= 0
+      };
+    })()`);
+    viewportProbes.push({ width, height, ...probe });
+    assert.ok(probe.scrollW <= probe.w + 1, `${width}x${height} 出现横向滚动：${probe.scrollW} > ${probe.w}`);
+    assert.ok(probe.sendUsable, `${width}x${height} 发送按钮不在视口内：${JSON.stringify(probe.send)} / 视口高 ${probe.h}`);
+    assert.ok(probe.promptUsable, `${width}x${height} 输入框不在视口内：${JSON.stringify(probe.prompt)}`);
+  }
+  if (process.env.IRIS_VIEWPORT_VERBOSE === '1') {
+    for (const probe of viewportProbes) console.log(`  ${probe.width}x${probe.height} → 视口 ${probe.w}x${probe.h}，页面高 ${probe.scrollH}，发送键 ${probe.send ? probe.send.top + '..' + probe.send.bottom : '无'}`);
   }
   win.setSize(1380, 920); await delay(200); await setTheme('light');
   await js('document.querySelector("[data-model-options=gpt]").click()'); await capture('v5-power-light.png');
