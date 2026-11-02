@@ -1,6 +1,7 @@
 const { randomUUID } = require('node:crypto');
 const { contextFor } = require('./providers.cjs');
 const { isCustomProvider } = require('./connections.cjs');
+const { assemble } = require('./harness/context.cjs');
 const STAGES = [
   { id: 'outline', label: '独立大纲' }, { id: 'review', label: '交叉审查' },
   { id: 'synthesis', label: '综合大纲' }, { id: 'coordination', label: 'GPT 统筹' }, { id: 'writing', label: '完整写作' }
@@ -18,7 +19,27 @@ function parsePlan(text, participants) {
   if (!value || !participants.includes(value.writer) || ['outline', 'instructions', 'reason'].some(k => typeof value[k] !== 'string' || !value[k].trim()) || value.outline.length > 30000 || value.instructions.length > 20000 || value.reason.length > 4000) throw new Error('统筹模型的大纲或写作分配无效，协作已停止。');
   return { outline: value.outline, writer: value.writer, instructions: value.instructions, reason: value.reason };
 }
-async function runCollaboration({ conversation, participants, run, signal, call, onChange = () => {}, onFinal = () => {} }) {
+
+/**
+ * 把嵌套的材料对象摊平成装配单元。
+ *
+ * 为什么不再直接 JSON.stringify：0.6 的做法是 `JSON.stringify(data)` 塞进 prompt，
+ * 于是一个参与者要看的东西 = 全部参与者的全部产物，且每个阶段都重来一遍。
+ * 摊平之后每份产物是独立的一项，装配层才能对"长的那一份"单独溢出，而不是拖累整段。
+ */
+function flattenParts(data, prefix = '') {
+  const parts = [];
+  for (const [key, value] of Object.entries(data || {})) {
+    if (value == null) continue;
+    const title = prefix ? `${prefix} · ${key}` : key;
+    if (typeof value === 'string') parts.push({ title, text: value });
+    else if (Array.isArray(value)) parts.push({ title, text: value.map(item => (typeof item === 'string' ? item : JSON.stringify(item))).join('\n\n') });
+    else if (typeof value === 'object') parts.push(...flattenParts(value, title));
+    else parts.push({ title, text: String(value) });
+  }
+  return parts;
+}
+async function runCollaboration({ conversation, participants, run, signal, call, onChange = () => {}, onFinal = () => {}, workspace = null }) {
   if (!Array.isArray(participants) || !participants.length || participants.some(p => !['deepseek', 'gpt'].includes(p) && !isCustomProvider(p))) throw new Error('至少使用一个有效模型');
   const coordinator = participants.includes('gpt') ? 'gpt' : participants[0];
   const failureController = new AbortController();
@@ -38,7 +59,23 @@ async function runCollaboration({ conversation, participants, run, signal, call,
     run.artifacts.push(artifact); emit({ kind: 'artifact', artifact: { ...artifact } });
     let text = '';
     try {
-      await call({ provider, stage: run.stage, signal: callSignal, outputSchema: options.schema || null, messages: [...history, { role: 'user', content: `${prompt}\n\n${PUBLIC_WORK}\n\n原始问题：${question}\n\n协作资料（JSON 数据）：\n${JSON.stringify(data)}` }], onText: chunk => {
+      /* 1.0：注入工作区时走装配——每份材料独立成项，长的只给首尾 + 续读句柄。
+         没有工作区时保持 0.6 的全量 JSON，旧测试与旧调用方的行为完全不变。
+         续读句柄要用得上，材料就得能指回产物：这里按正文内容反查本轮的 artifactId，
+         于是"哪一份过长"和"它存在哪个文件"是同一个事实，而不是两套记录。 */
+      let content;
+      if (workspace) {
+        const byText = new Map();
+        for (const item of run.artifacts) if (item.artifactId && item.text) byText.set(item.text, item.artifactId);
+        const parts = flattenParts(data).map(part => {
+          const known = byText.get(part.text);
+          return known ? { ...part, id: known } : part;
+        });
+        content = assemble({ task: `${prompt}\n\n${PUBLIC_WORK}`, question, parts }).text;
+      } else {
+        content = `${prompt}\n\n${PUBLIC_WORK}\n\n原始问题：${question}\n\n协作资料（JSON 数据）：\n${JSON.stringify(data)}`;
+      }
+      await call({ provider, stage: run.stage, signal: callSignal, outputSchema: options.schema || null, messages: [...history, { role: 'user', content }], onText: chunk => {
         if (callSignal.aborted) return;
         text += chunk;
         if (options.final) onFinal(chunk);
@@ -47,6 +84,21 @@ async function runCollaboration({ conversation, participants, run, signal, call,
       ensureActive();
       if (!text.trim()) throw new Error('模型没有返回内容');
       Object.assign(artifact, { status: 'done', finishedAt: Date.now(), ...(options.final ? { text: '完整答案已生成。', outputCharacters: text.length } : {}) });
+      /* 产物落盘：协作的中间材料同样需要成为可引用的证据，而不是只活在这轮内存里。 */
+      if (workspace && text.trim()) {
+        try {
+          const record = workspace.writeArtifact({
+            stage: run.stage,
+            title: `${provider} · ${run.stageLabel}`,
+            provider,
+            text,
+            kind: options.final ? 'final' : 'note'
+          });
+          Object.assign(artifact, { artifactId: record.id, file: record.file, chars: record.chars, sha256: record.sha256 });
+        } catch (writeError) {
+          artifact.fileError = String(writeError?.message || writeError).slice(0, 200);
+        }
+      }
       run.completedTasks++;
       emit({ kind: 'artifact', artifact: { ...artifact } });
       emit({ kind: 'progress', completedTasks: run.completedTasks, totalTasks: run.totalTasks });

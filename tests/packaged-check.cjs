@@ -152,7 +152,11 @@ async function launch() {
   assert.ok(execView.metricCount > 0, '打包版执行应产出指标');
   assert.ok(execView.artifacts.length >= 2, '打包版执行应产出产物');
 
-  const result = { passed: true, executable, version: '0.6.0', historiesDetected: count, packagedHistoryRead: true, nativeWorkspaces: true, restartRestoresStrengths: true, restartRestoresWorkspaceAndSelection: true, restartRestoresRealCooperation: true, restartRestoresResearchModeAndTaskModels: true, restartRestoresResearchAnswer: true, encryptedProfileSurvivesRestart: true, restartRestoresTheme: true, irisBrandAndIcon: true, localMarkdownAndIcons: true, concreteModelName: displayName, powerSlider: true, noDemoMode: true, verificationProfileIsolated: true, packagedExecRun: execView.status, packagedExecMetrics: execView.metricCount };
+  /* 版本号从 package.json 读，不写死：写死会在升版之后让报告撒谎，
+     而这份报告正是用来判断"装的到底是哪一版"的。
+     注意本文件的 fs 是 node:fs/promises，所以这里用 await 读。 */
+  const expectedVersion = JSON.parse(await fs.readFile(path.join(__dirname, '../package.json'), 'utf8')).version;
+  const result = { passed: true, executable, version: expectedVersion, historiesDetected: count, packagedHistoryRead: true, nativeWorkspaces: true, restartRestoresStrengths: true, restartRestoresWorkspaceAndSelection: true, restartRestoresRealCooperation: true, restartRestoresResearchModeAndTaskModels: true, restartRestoresResearchAnswer: true, encryptedProfileSurvivesRestart: true, restartRestoresTheme: true, irisBrandAndIcon: true, localMarkdownAndIcons: true, concreteModelName: displayName, powerSlider: true, noDemoMode: true, verificationProfileIsolated: true, packagedExecRun: execView.status, packagedExecMetrics: execView.metricCount };
   await fs.writeFile(path.join(__dirname, '../artifacts/v5-packaged-check.json'), JSON.stringify(result, null, 2));
   // Close the test instance so the final app can start without a debugging port.
   const exitedAgain = new Promise(r => app.child.once('exit', r));

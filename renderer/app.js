@@ -307,7 +307,15 @@ function previewOf(text, max = 160) {
 }
 function processTimeline(run) {
   const participants = run.participants.map(p => `${modelName(p.provider, p.model)} · ${effortLabel(p.effort)}`).join(' + ');
-  return `<div class="process-note">${esc(participants)}<br>这里展示模型公开生成的大纲、评审与提案，不包含内部思维链。${run.mode === 'research' ? `<br>实际调用 ${run.callsUsed} / ${run.callBudget} 次。${esc(run.selection?.budgetNote || '')}` : ''}</div>${researchSummary(run)}<ol class="process-timeline">${run.artifacts.map(a => `<li class="process-artifact ${a.status}" data-artifact="${esc(a.id)}"><div class="artifact-heading"><span class="artifact-dot"></span><strong>${esc(a.stageLabel)}${a.taskLabel ? ` / ${esc(a.taskLabel)}` : ''}</strong><span>${esc(a.model ? modelName(a.provider, a.model) + ' · ' + effortLabel(a.effort) : providerName(a.provider))}${a.recipient ? ` → ${esc(a.recipient.split(',').map(providerName).join('、'))}` : ''}</span><small>${a.status === 'running' ? '进行中' : a.status === 'done' ? '完成' : a.status === 'error' ? '失败' : '已停止'}</small></div><div class="artifact-body">${a.stage === 'coordination' && run.plan && a.status === 'done' ? `${markdown(run.plan.outline)}<p><strong>写作分配：</strong>${esc(modelName(run.writer, run.participants.find(p => p.provider === run.writer)?.model))}</p><p>${esc(run.plan.reason)}</p><p><strong>写作要求：</strong>${esc(run.plan.instructions)}</p>` : researchArtifact(a, run) || markdown(a.text) || '<span class="muted">等待模型返回…</span>'}${a.error ? `<p class="error-text">${esc(a.error)}</p>` : ''}</div></li>`).join('')}</ol>`;
+  /* 上下文装配的情况直接写在过程面板顶部：这是 1.0 最容易被误解的一处。
+     用户以前看到的是"全部材料都发过去了"，现在只发摘要 + 句柄，必须让这件事可见。 */
+  const contextNote = run.context
+    ? `<br>上下文装配 ${run.context.chars.toLocaleString()} 字符（预算 ${run.context.budget.toLocaleString()}）：内联 ${run.context.inlined} 项、溢出 ${run.context.spilled} 项`
+    : '';
+  const toolNote = (run.toolLog || []).length
+    ? `<br>工具调用 ${run.toolLog.length} 次：${run.toolLog.map(t => `${esc(t.name)}${t.ok ? '' : '（失败）'}`).join('、')}`
+    : '';
+  return `<div class="process-note">${esc(participants)}<br>这里展示模型公开生成的大纲、评审与提案，不包含内部思维链。${run.mode === 'research' ? `<br>实际调用 ${run.callsUsed} / ${run.callBudget} 次。${esc(run.selection?.budgetNote || '')}` : ''}${contextNote}${toolNote}</div>${researchSummary(run)}<ol class="process-timeline">${run.artifacts.map(a => `<li class="process-artifact ${a.status}" data-artifact="${esc(a.id)}"><div class="artifact-heading"><span class="artifact-dot"></span><strong>${esc(a.stageLabel)}${a.taskLabel ? ` / ${esc(a.taskLabel)}` : ''}</strong><span>${esc(a.model ? modelName(a.provider, a.model) + ' · ' + effortLabel(a.effort) : providerName(a.provider))}${a.recipient ? ` → ${esc(a.recipient.split(',').map(providerName).join('、'))}` : ''}</span><small>${a.status === 'running' ? '进行中' : a.status === 'done' ? '完成' : a.status === 'error' ? '失败' : '已停止'}</small></div><div class="artifact-body">${a.stage === 'coordination' && run.plan && a.status === 'done' ? `${markdown(run.plan.outline)}<p><strong>写作分配：</strong>${esc(modelName(run.writer, run.participants.find(p => p.provider === run.writer)?.model))}</p><p>${esc(run.plan.reason)}</p><p><strong>写作要求：</strong>${esc(run.plan.instructions)}</p>` : researchArtifact(a, run) || markdown(a.text) || '<span class="muted">等待模型返回…</span>'}${a.file ? `<p class="artifact-file"><span class="muted">产物 ${esc(a.artifactId)} · ${(a.chars || 0).toLocaleString()} 字 · sha ${esc(String(a.sha256 || '').slice(0, 8))}</span></p>` : ''}${a.error ? `<p class="error-text">${esc(a.error)}</p>` : ''}</div></li>`).join('')}</ol>`;
 }
 function processDetails(m) {
   const run = m.collaboration; if (!run) return '';
@@ -549,6 +557,10 @@ function handleEvent(event) {
     if (e.kind === 'research-audit') run.audit = e.audit;
     if (e.kind === 'monitor') { (run.monitorLog || (run.monitorLog = [])).push({ ...e.decision, where: e.where }); }
     if (e.kind === 'budget') Object.assign(run, { callsUsed: e.callsUsed, callBudget: e.callBudget });
+    /* 1.0 harness：工具往返与上下文装配都要看得见。
+       否则用户只看到"模型想了两分钟"，看不到它其实读了哪几份产物、跑没跑实验。 */
+    if (e.kind === 'tool') (run.toolLog || (run.toolLog = [])).push({ step: e.step, name: e.name, ok: e.ok, ms: e.ms, error: e.error, chars: e.chars });
+    if (e.kind === 'context') run.context = { chars: e.chars, budget: e.budget, inlined: e.inlined, summarized: e.summarized, spilled: e.spilled, items: e.items, digest: e.digest };
     if (e.kind === 'skipped') run.skippedStages = e.stages;
     if (e.kind === 'writer') Object.assign(m, { provider: e.writer, model: e.choice.model, effort: e.choice.effort });
     if (state.view === 'chat') {

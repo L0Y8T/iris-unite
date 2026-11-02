@@ -18,6 +18,13 @@ const planner = require('./plan.cjs');
 const { createLedger } = require('./budget.cjs');
 const experiment = require('./experiment.cjs');
 const { parseLoose } = require('./json-parse.cjs');
+/* 1.0 harness：收口环节可以不再"把全部材料塞进 prompt"，改为装配 + 按需读取。
+   这些模块缺省不启用；只有调用方注入 workspace 时才会走到新路径。 */
+const { assemble } = require('./harness/context.cjs');
+const { createToolbox } = require('./harness/tools/index.cjs');
+const { renderProtocol } = require('./harness/protocol.cjs');
+const { runAgentLoop } = require('./harness/loop.cjs');
+const { summarize } = require('./harness/workspace.cjs');
 
 /* 环节定义。kind=model 的环节调用模型并消耗预算；kind=local 的环节只在本地计算。
    order 是执行顺序，界面按这个顺序画架构图。 */
@@ -427,7 +434,7 @@ function knowledgeBlock(knowledge, { limit = 36, abstractChars = 500 } = {}) {
 
 const ANTI_FABRICATION = '禁止编造文献、DOI、arXiv 号、检索结果、实验或数据。任何文献引用只能使用「资料库」里出现过的键（如 S3）；实验数字只能来自「已完成的实验运行」清单里列出的指标，并按 [E1] 形式标注来源；这两份材料里没有的内容只能明确写成待核验假设或证据缺口，不得伪造出处。证据不足时应当说明不足，而不是补一个像真的引用。';
 
-async function runResearch({ conversation, config, run, signal, call, onChange = () => {}, onFinal = () => {}, retrieve, knowledge, citation, monitor, experimentRuns = [], experimentReference = null, verifyExperiments = null, experimentTools = null }) {
+async function runResearch({ conversation, config, run, signal, call, onChange = () => {}, onFinal = () => {}, retrieve, knowledge, citation, monitor, experimentRuns = [], experimentReference = null, verifyExperiments = null, experimentTools = null, workspace = null }) {
   assertRunnable(config);
   const configPlan = planner.compileConfigPlan(config);
   const { active: plannedNodes, skipped: plannedSkips } = planner.activeNodes(configPlan, config);
@@ -527,6 +534,24 @@ async function runResearch({ conversation, config, run, signal, call, onChange =
       if (!output.trim()) throw new Error('模型没有返回研究结果');
       ledger.settle(attemptId, 'succeeded');
       Object.assign(artifact, { status: 'done', finishedAt: Date.now(), ...(final ? { text: '科研完整答案已生成。', outputCharacters: output.length } : {}) });
+      /* 产物落盘：这是 Inline & Spill 的地基。把正文写进 run 工作区并拿到 art- 开头的新 id，
+         后续环节才能"只带摘要 + 句柄、按需读取"，而不是把全文 JSON.stringify 进每条 prompt。
+         注入缺席时保持旧行为——纯逻辑调用与离线测试不需要磁盘。 */
+      if (workspace && output.trim()) {
+        try {
+          const record = workspace.writeArtifact({
+            stage: run.stage,
+            title: artifact.taskLabel || artifact.stageLabel,
+            provider: selected.provider,
+            text: output,
+            kind: final ? 'final' : 'note'
+          });
+          Object.assign(artifact, { artifactId: record.id, file: record.file, chars: record.chars, sha256: record.sha256 });
+        } catch (writeError) {
+          /* 落盘失败不该让一整轮研究失败：正文仍在内存 artifacts 里，只是不能按需召回。 */
+          artifact.fileError = String(writeError?.message || writeError).slice(0, 200);
+        }
+      }
       run.completedTasks++;
       emit({ kind: 'artifact', artifact: { ...artifact } });
       emit({ kind: 'progress', completedTasks: run.completedTasks, totalTasks: run.totalTasks });
@@ -537,6 +562,160 @@ async function runResearch({ conversation, config, run, signal, call, onChange =
       emit({ kind: 'artifact', artifact: { ...artifact } });
       throw e;
     }
+  }
+
+  /* ── 1.0：可调用工具的收口请求 ─────────────────────────────────────────
+   *
+   * 与 request 的区别只有一处，但很关键：材料不再整份 JSON.stringify 进 prompt，
+   * 而是走 Inline & Spill 装配——短材料内联，长材料只给首尾 + 续读句柄，
+   * 模型需要细节时用 read_artifact / search_artifacts 自己取。
+   *
+   * 为什么值得为此多走几轮：收口环节要读的东西最多（界定、证据、全部推演、筛选、
+   * 深化、资料库、实验记录），而其中真正影响这一句结论的往往只是一两条。
+   * 全量灌进去，模型看得见一切却容易被淹没；按需取，它必须说明自己在看什么。
+   *
+   * 预算照旧：占位在发出前，失败也计数。工具往返发生在同一次"预算槽"里，
+   * 因为它们是同一环节的多次往返，不该按调用数重复计价——成本按 token 看，
+   * 而 token 已经因为装配而大幅下降。
+   */
+  function toolCapabilities() {
+    const caps = { checkIntegrity: () => workspace.verifyArtifacts() };
+    if (typeof verifyExperiments === 'function') {
+      caps.verifyClaims = text => verifyExperiments(text, gateRuns);
+    }
+    if (typeof retrieve === 'function') {
+      caps.searchLiterature = ({ query, limit, yearFrom: from, signal: searchSignal }) =>
+        retrieve({ query, sources: config.retrieval.sources, limit, yearFrom: from, signal: searchSignal });
+    }
+    if (experimentTools) {
+      caps.listTemplates = () => experimentTools.templates();
+      caps.checkBudget = () => experimentTools.checkBudget();
+      caps.runExperiment = options => experimentTools.run(options);
+    }
+    return caps;
+  }
+
+  async function requestWithTools(selected, prompt, buildParts, { task = null, maxSteps = 6 } = {}) {
+    active();
+    const attemptId = ledger.reserveSlot(run.stage, { required: true, note: task?.title || '' });
+    ledger.dispatch(attemptId);
+    run.callsUsed = ledger.spent();
+    run.lastActivityAt = Date.now();
+    emit({ kind: 'budget', callsUsed: run.callsUsed, callBudget: run.callBudget });
+
+    const artifact = {
+      id: randomUUID(), stage: run.stage, stageLabel: run.stageLabel,
+      provider: selected.provider, model: selected.model, effort: selected.effort,
+      taskLabel: task?.title || '', kind: 'final',
+      text: '', status: 'running', startedAt: Date.now(), finishedAt: null
+    };
+    run.artifacts.push(artifact);
+    emit({ kind: 'artifact', artifact: { ...artifact } });
+
+    let streamed = '';
+    try {
+      const parts = buildParts();
+      const assembled = assemble({ task: prompt, question, parts });
+      const box = createToolbox({ workspace, capabilities: toolCapabilities() });
+      const protocol = renderProtocol({ tools: box.specs(), maxSteps });
+      emit({ kind: 'context', digest: assembled.digest, ...assembled.stats, spill: assembled.spill.length });
+
+      const outcome = await runAgentLoop({
+        provider: selected.provider,
+        stage: run.stage,
+        messages: [...history, { role: 'user', content: `${assembled.text}\n\n${protocol}` }],
+        toolbox: box,
+        limits: { maxSteps },
+        signal: combined,
+        onEvent: event => {
+          run.lastActivityAt = Date.now();
+          emit({ kind: 'tool', step: event.step, name: event.name, ok: event.ok, ms: event.ms, args: event.args, error: event.error, chars: event.chars });
+        },
+        /* 流式照旧：最终答案逐字到正文草稿；工具往返里的 JSON 由嗅探器挡掉。 */
+        onText: chunk => {
+          if (combined.aborted) return;
+          streamed += chunk;
+          run.lastActivityAt = Date.now();
+          onFinal(chunk);
+        },
+        call: async ({ messages: shots, signal: passSignal, onText, outputSchema }) =>
+          call({
+            provider: selected.provider,
+            choice: selected,
+            stage: run.stage,
+            signal: passSignal,
+            outputSchema,
+            messages: shots,
+            onText
+          })
+      });
+
+      active();
+      const text = String(outcome.text || '').trim();
+      if (!text) throw new Error('模型没有返回研究结果');
+      ledger.settle(attemptId, 'succeeded');
+      Object.assign(artifact, {
+        status: 'done', finishedAt: Date.now(),
+        text: '科研完整答案已生成。', outputCharacters: text.length,
+        toolCalls: outcome.toolCalls.length, harnessSteps: outcome.steps,
+        stopReason: outcome.stoppedReason
+      });
+      /* 最终正文落盘：可交付物与中间材料分开，便于事后核对与导出。 */
+      if (workspace && text) {
+        try {
+          const record = workspace.writeArtifact({ stage: run.stage, title: '最终答案', provider: selected.provider, text, kind: 'final' });
+          Object.assign(artifact, { artifactId: record.id, file: record.file, chars: record.chars, sha256: record.sha256 });
+        } catch (writeError) {
+          artifact.fileError = String(writeError?.message || writeError).slice(0, 200);
+        }
+      }
+      run.completedTasks++;
+      emit({ kind: 'artifact', artifact: { ...artifact } });
+      emit({ kind: 'progress', completedTasks: run.completedTasks, totalTasks: run.totalTasks });
+      return text;
+    } catch (e) {
+      ledger.settle(attemptId, signal.aborted ? 'cancelled' : 'failed', { note: String(e?.message || e).slice(0, 120) });
+      Object.assign(artifact, { status: combined.aborted ? 'stopped' : 'error', error: signal.aborted ? '已停止' : e.message, finishedAt: Date.now() });
+      emit({ kind: 'artifact', artifact: { ...artifact } });
+      throw e;
+    }
+  }
+
+  /**
+   * 收口环节的材料清单。
+   *
+   * 优先用工作区里已经落盘的环节产物：它们是"有哪些、多长"的真相，
+   * 装配器据此决定内联还是溢出。工作区为空时退回全量材料——
+   * 宁可贵一点，也不能让收口环节缺材料。
+   */
+  function finalParts(materials) {
+    const parts = [];
+    let records = [];
+    try { records = workspace.listArtifacts(); }
+    catch { records = []; }
+
+    for (const record of records) {
+      if (record.kind === 'log' || record.kind === 'final') continue;
+      let text = record.summary;
+      try { text = workspace.readArtifact(record.id).text; }
+      catch { /* 读不到正文就用摘要兜底，不阻断收口 */ }
+      parts.push({ title: `${record.stage} · ${record.title}`, id: record.id, text });
+    }
+
+    if (!records.length) {
+      for (const [key, value] of Object.entries(materials)) {
+        if (value == null) continue;
+        parts.push({ title: key, text: typeof value === 'string' ? value : JSON.stringify(value) });
+      }
+      return parts;
+    }
+
+    /* 工作区已有产物，但这几样不是产物：资料库索引、实验运行清单、上一轮成果。 */
+    if (materials.experiments) parts.push({ title: '已完成的实验运行', text: String(materials.experiments) });
+    if (materials.experimentSummary) parts.push({ title: '本轮实验小结', text: JSON.stringify(materials.experimentSummary) });
+    if (materials.library) parts.push({ title: '资料库索引', text: String(materials.library) });
+    if (materials.priorResults) parts.push({ title: '上一轮已完成的研究', text: JSON.stringify(materials.priorResults) });
+    return parts;
   }
 
   async function parallel(tasks, work) {
@@ -602,10 +781,16 @@ async function runResearch({ conversation, config, run, signal, call, onChange =
     const rounds = [];
     let pending = built.trials;
     let analysis = null;
+    /* 心跳：trial 进行中也要刷新，否则单个实验跑过 10 分钟会被 main.cjs 的停滞看门狗
+       判成卡死然后 abort——这是误杀，不是超时。原本只有 trial 结束后才刷新一次。 */
+    const noteActivity = () => { run.lastActivityAt = Date.now(); };
     for (let roundNo = 1; roundNo <= plan.maxRounds; roundNo++) {
       stage('experiment-run', pending.length);
       const roundRuns = [];
-      for (const trial of pending) {
+      /* 批内并行、批间串行。两个好处：预算检查仍然发生在"每批开始前"（不会等到钱花完才停），
+         而 roundRuns 的收集顺序始终等于 trials 的设计顺序——E 编号依赖这个顺序，不能乱。 */
+      const concurrency = Math.max(1, Math.min(Number(plan.concurrency) || 1, pending.length || 1));
+      for (let start = 0; start < pending.length; start += concurrency) {
         active();
         let budget = null;
         try { budget = await tools.checkBudget(); } catch { budget = null; }
@@ -613,17 +798,28 @@ async function runResearch({ conversation, config, run, signal, call, onChange =
           emit({ kind: 'artifact', artifact: { id: randomUUID(), stage: 'experiment-run', stageLabel: '训练与评估', kind: 'notice', status: 'done', text: `执行预算不足，已停止后续实验：${budget.reason || ''}`.trim(), startedAt: Date.now(), finishedAt: Date.now() } });
           break;
         }
-        let manifest = null;
-        try {
-          manifest = await tools.run({ templateId: trial.template, params: trial.params, signal: combined, label: trial.label });
-        } catch (error) {
-          manifest = { runId: null, label: trial.label, status: 'failed', error: String(error?.message || error).slice(0, 300), params: trial.params, template: { id: trial.template } };
-        }
-        if (manifest) {
+        const batch = pending.slice(start, start + concurrency);
+        const settled = await Promise.all(batch.map(async trial => {
+          noteActivity();
+          try {
+            return await tools.run({
+              templateId: trial.template,
+              params: trial.params,
+              signal: combined,
+              label: trial.label,
+              /* 执行器每产出一条事件就回调一次，把心跳推到现在。 */
+              onActivity: noteActivity
+            });
+          } catch (error) {
+            return { runId: null, label: trial.label, status: 'failed', error: String(error?.message || error).slice(0, 300), params: trial.params, template: { id: trial.template } };
+          }
+        }));
+        for (const manifest of settled) {
+          if (!manifest) continue;
           roundRuns.push(manifest);
           if (manifest.runId) { runs.push(manifest); gateRuns.push(manifest); }
         }
-        run.lastActivityAt = Date.now();
+        noteActivity();
       }
       const summary = experiment.summarizeRuns(roundRuns, { metric: built.metric, direction: built.direction });
       emit({ kind: 'experiment-runs', round: roundNo, summary });
@@ -947,8 +1143,7 @@ async function runResearch({ conversation, config, run, signal, call, onChange =
     if (hasNode('research-final')) {
     stage('research-final', 1);
     emit({ kind: 'writer', writer: config.choices.final.provider, choice: config.choices.final });
-    finalText = await request(config.choices.final,
-      `你是最终反证与整合者。阅读研究界定、证据、全部研究结果、候选筛选与深化成果，严厉检验机制、创新性、可行性与证据缺口，整合成唯一可直接交付的科研答案。
+    const finalPrompt = `你是最终反证与整合者。阅读研究界定、证据、全部研究结果、候选筛选与深化成果，严厉检验机制、创新性、可行性与证据缺口，整合成唯一可直接交付的科研答案。
 要求：
 1) 正文里每一处引用都只能写成资料库键，形如 [S3] 或 [S3,S7]，不得写作者-年份、不得自造 DOI。
 2) 明确区分「已有证据支持的结论」「本文推演但未验证的假设」「需要实验回答的问题」。
@@ -956,9 +1151,15 @@ async function runResearch({ conversation, config, run, signal, call, onChange =
 4) 如果证据不足以支撑某个结论，直接说证据不足，不要补一个像真的出处。
 5) 引用实验运行时写成 [E1] 或 [E1,E2]（编号来自「已完成的实验运行」清单），正文里的实验数字必须与该行列出的指标一致（写 97.3% 或 0.973 都算一致）；清单为空时不要写任何实验数字，也不要声称跑过实验。
 6) 如果给了「上一轮已完成的研究」材料，那是同一个研究问题已经做过的界定、证据与推演，直接在此基础上写，不要重复它已经说过的内容。
-只输出完整最终答案，不附协作对话或内部过程。`,
-      { scope, evidence, plan, tasks: config.tasks, explorations, selection: run.selection, refinements, library, priorResults: carry?.prior || null, experiments: referenceOf(), experimentSummary: experimentResult && !experimentResult.skipped ? { metric: experimentResult.metric, direction: experimentResult.direction, best: experimentResult.summary?.best || null, rounds: experimentResult.rounds?.length || 0, failed: experimentResult.summary?.failed || 0 } : null },
-      { final: true });
+只输出完整最终答案，不附协作对话或内部过程。`;
+    const finalMaterials = { scope, evidence, plan, tasks: config.tasks, explorations, selection: run.selection, refinements, library, priorResults: carry?.prior || null, experiments: referenceOf(), experimentSummary: experimentResult && !experimentResult.skipped ? { metric: experimentResult.metric, direction: experimentResult.direction, best: experimentResult.summary?.best || null, rounds: experimentResult.rounds?.length || 0, failed: experimentResult.summary?.failed || 0 } : null };
+    /* 1.0 harness 路径：材料走装配、模型可调工具按需读取。
+       注入工作区才启用；没有工作区时走 0.6 的老路径，行为完全一致。 */
+    if (workspace && config?.harness?.tools !== false) {
+      finalText = await requestWithTools(config.choices.final, finalPrompt, () => finalParts(finalMaterials));
+    } else {
+      finalText = await request(config.choices.final, finalPrompt, finalMaterials, { final: true });
+    }
     }
 
     /* 计划里没有任何收口环节时，必须明确失败，而不是把空正文当答案发出去。 */

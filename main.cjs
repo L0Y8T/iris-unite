@@ -28,6 +28,8 @@ const execManifests = require('./core/exec/manifest.cjs');
 const execClaims = require('./core/exec/claims.cjs');
 const execBudget = require('./core/exec/budget.cjs');
 const execDrivers = require('./core/exec/driver.cjs');
+const { openWorkspace, pruneRuns } = require('./core/harness/workspace.cjs');
+const { newRunId } = require('./core/harness/ids.cjs');
 
 app.setName('Iris Unite');
 const smoke = !app.isPackaged && process.argv.includes('--smoke-test');
@@ -590,6 +592,20 @@ async function sendTurn(id, text, { appendUser = true, retryOf = null, resumeFro
     if (c.title === '新的对话') c.title = text.trim().replace(/\s+/g, ' ').slice(0, 32);
     const context = JSON.parse(JSON.stringify(c));
     const collaboration = researchConfig ? research.createRun(researchConfig) : createRun(participants, selectedConfig);
+    /* 每次运行一个工作区（1.0 harness 的地基）：产物落盘后可以按需召回，
+       崩溃后也还在盘上；工作区建不起来时降级为旧行为，不让整轮发不出去。 */
+    let harnessWorkspace = null;
+    try {
+      collaboration.runId = newRunId();
+      harnessWorkspace = openWorkspace({
+        root: dataRoot,
+        runId: collaboration.runId,
+        meta: { conversationId: id, messageId: null, mode: researchConfig ? 'research' : 'collaboration', profile: researchConfig?.profile || null }
+      });
+    } catch (error) {
+      console.error('运行工作区创建失败，本轮不落盘产物：', error.message);
+      harnessWorkspace = null;
+    }
     const reply = { id: randomUUID(), role: 'assistant', kind: 'answer', provider: collaboration.writer, text: '', status: 'streaming', roundId, timestamp: Date.now(), collaboration, ...(retryOf ? { attemptOf: retryOf } : {}) };
     if (reply.provider) Object.assign(reply, researchConfig ? researchConfig.choices.final : selectedConfig[reply.provider]);
     c.messages.push(reply); store.save();
@@ -639,6 +655,8 @@ async function sendTurn(id, text, { appendUser = true, retryOf = null, resumeFro
         const execute = researchConfig ? research.runResearch : runCollaboration;
         const result = await execute({
           conversation: context, participants, config: researchConfig, run: collaboration, signal: controller.signal,
+          /* 运行工作区：产物落盘的落点。缺省为 null 时行为与 0.6 完全一致。 */
+          workspace: harnessWorkspace,
           ...(researchConfig ? {
             // 真实检索：不加任何密钥，走公开学术接口。联系人邮箱用于 OpenAlex 的礼貌池，可选。
             retrieve: ({ query, sources, limit, yearFrom, signal }) => retrieval.search({ query, sources, limit, yearFrom, signal, contact: settings.retrievalContact || process.env.IRIS_RETRIEVAL_CONTACT || undefined }),
@@ -660,13 +678,18 @@ async function sendTurn(id, text, { appendUser = true, retryOf = null, resumeFro
                 .filter(template => !template.unimplemented)
                 .map(template => ({ id: template.id, name: template.name, metrics: template.metrics, params: template.params })),
               checkBudget: () => execBudget.evaluateBudget({ runs: readExecIndex(), conversationId: id }),
-              run: async ({ templateId, params, signal, label }) => {
+              run: async ({ templateId, params, signal, label, onActivity }) => {
                 const template = execTemplates.templateById(templateId);
                 const driver = execDrivers.resolve(template);
                 const env = await driver.prepare({ template, dataRoot, onLog: line => sendEvent({ type: 'exec-prepare', templateId: template.id, line }) });
                 const { manifest } = await driver.run({
                   template, params, dataRoot, env, signal, conversationId: id,
-                  onEvent: event => sendEvent({ type: 'exec-event', event: { ...event, label } })
+                  onEvent: event => {
+                    /* 把执行期的每一条事件当作心跳：否则一个跑十分钟的 trial 会被
+                       停滞看门狗判成卡死然后误杀（research.cjs 侧靠它刷新 lastActivityAt）。 */
+                    if (typeof onActivity === 'function') { try { onActivity(event); } catch { /* 心跳失败不影响执行 */ } }
+                    sendEvent({ type: 'exec-event', event: { ...event, label } });
+                  }
                 });
                 /* label 是 trial 的展示名，不能占用 manifest.label——那个字段是 E 编号的位置，
                    由 claims.labelRuns 按时间顺序分配，否则模型写的 [E1] 会对不上。 */
@@ -726,6 +749,13 @@ async function sendTurn(id, text, { appendUser = true, retryOf = null, resumeFro
         reply.error = controller.signal.aborted ? '已停止生成' : e.message;
       } finally {
         clearTimeout(persistTimer); clearTimeout(timer); if (watchdog) clearInterval(watchdog); running.delete(id);
+        /* 工作区收尾：把终态写进 run.json 再关账本。收尾失败不该影响本轮结果。 */
+        if (harnessWorkspace) {
+          try {
+            harnessWorkspace.setMeta({ status: reply.status, finishedAt: Date.now(), callsUsed: collaboration.callsUsed ?? null });
+            harnessWorkspace.close();
+          } catch (error) { console.error('运行工作区收尾失败：', error.message); }
+        }
         // 只有新回答成功，旧答案才标为被取代；失败时旧答案继续可见（§11.5）。
         if (retryOf && reply.status === 'done') {
           const previous = c.messages.find(m => m.id === retryOf);
@@ -807,6 +837,12 @@ async function sendTurn(id, text, { appendUser = true, retryOf = null, resumeFro
 app.whenReady().then(async () => {
   if (!singleInstance) return;
   store = new Store(dataRoot);
+  /* 运行目录清理：每发一轮就建一个 run 目录，不清理会无限增长。
+     保留最近 50 个，正在运行的那个永远在末尾、不会被删。清理失败不影响启动。 */
+  try {
+    const pruned = pruneRuns({ root: dataRoot, keep: 50 });
+    if (pruned.removed.length) console.log(`已清理 ${pruned.removed.length} 个旧运行目录`);
+  } catch (error) { console.error('运行目录清理失败（不影响使用）：', error.message); }
   worker = new Worker(path.join(__dirname, 'core/history-worker.cjs'));
   worker.on('message', ({ id, result, error }) => {
     const r = requests.get(id); if (!r) return; clearTimeout(r.timer); requests.delete(id);

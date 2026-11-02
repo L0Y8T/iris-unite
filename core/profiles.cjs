@@ -31,7 +31,11 @@ const POLICY = Object.freeze({
   maxExperimentTrials: 12,
   maxExperimentRounds: 4,
   defaultExperimentTrials: 4,
-  defaultExperimentRounds: 2
+  defaultExperimentRounds: 2,
+  /* 同时运行的 trial 数。实验是 CPU 密集型，同跑 2 个通常就是多数笔记本的甜点；
+     4 是硬上限，再多只会让每个 trial 各自变慢而总时长不变。 */
+  maxExperimentConcurrency: 4,
+  defaultExperimentConcurrency: 2
 });
 
 /* 角色 → 环节 id 的映射。角色名与配置里的 choices 键一致。 */
@@ -162,10 +166,13 @@ function normalizeExperiments(config) {
   const raw = config?.experiments || {};
   const trials = Number(raw.maxTrials ?? POLICY.defaultExperimentTrials);
   const rounds = Number(raw.maxRounds ?? POLICY.defaultExperimentRounds);
+  const concurrency = Number(raw.concurrency ?? POLICY.defaultExperimentConcurrency);
   return {
     enabled: raw.enabled === true,
     maxTrials: Math.min(POLICY.maxExperimentTrials, Math.max(1, Number.isInteger(trials) ? trials : POLICY.defaultExperimentTrials)),
     maxRounds: Math.min(POLICY.maxExperimentRounds, Math.max(1, Number.isInteger(rounds) ? rounds : POLICY.defaultExperimentRounds)),
+    /* 并行跑几个 trial。1 就是旧的串行行为，留着当排障开关。 */
+    concurrency: Math.min(POLICY.maxExperimentConcurrency, Math.max(1, Number.isInteger(concurrency) ? concurrency : POLICY.defaultExperimentConcurrency)),
     templateId: typeof raw.templateId === 'string' && raw.templateId ? raw.templateId : null,
     stopWhen: typeof raw.stopWhen === 'string' && raw.stopWhen ? raw.stopWhen.slice(0, 200) : '指标不再提升或达到 trial 上限'
   };
