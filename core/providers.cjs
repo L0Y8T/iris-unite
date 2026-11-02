@@ -101,7 +101,9 @@ async function runDeepseek({ conversation, settings, key, signal, onText, messag
   if (!response.ok) {
     // Avoid logging provider bodies, which may include request content or credentials.
     const hints = { 401: '密钥无效，请检查 DSH 或连接设置。', 402: '账户余额不足。', 429: '请求过于频繁，请稍后重试。' };
-    throw new Error(`DeepSeek 请求失败（${response.status}）：${hints[response.status] || '请检查网络、账户权限或模型名称。'}`);
+    /* 状态码单独挂出来：调用方要靠它区分「等一会儿再试」和「去改配置」，
+       从中文消息里正则抠数字既脆、又容易把正文里的数字吃进去。 */
+    throw Object.assign(new Error(`DeepSeek 请求失败（${response.status}）：${hints[response.status] || '请检查网络、账户权限或模型名称。'}`), { status: response.status });
   }
   let received = false;
   let truncated = false;

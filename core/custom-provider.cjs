@@ -33,12 +33,15 @@ async function runCustom({ connection, choice, key, messages, signal, onText, fe
       const cause = error?.cause?.code || error?.cause?.message || error?.message || '';
       let host = '';
       try { host = new URL(requestURL(connection)).host; } catch { host = connection.baseUrl || ''; }
-      throw new Error(`${connection.name} 无法连接 ${host}${cause && cause !== 'fetch failed' ? '（' + cause + '）' : ''}：请检查地址、端口、网络，以及该服务是否已启动`);
+      /* code 单独挂出来给重试判定用（ECONNRESET / ETIMEDOUT 可重试，ECONNREFUSED 不可）：
+         从消息里反解错误码要做模糊匹配，消息一改就跟着坏。 */
+      throw Object.assign(new Error(`${connection.name} 无法连接 ${host}${cause && cause !== 'fetch failed' ? '（' + cause + '）' : ''}：请检查地址、端口、网络，以及该服务是否已启动`), { code: error?.cause?.code || error?.code });
     }
   })();
   if (!response.ok) {
     const hints = { 401: '密钥无效或未授权。', 402: '账户余额不足。', 403: '账户无此模型权限。', 404: '地址或模型 ID 不存在。', 429: '请求过于频繁或额度已满。' };
-    throw new Error(`${connection.name} 请求失败（${response.status}）${hints[response.status] ? '：' + hints[response.status] : '，请检查密钥、模型 ID 与接口参数。'}`);
+    /* 同 providers.cjs：状态码挂在错误属性上，重试逻辑按属性判定，不解析中文消息。 */
+    throw Object.assign(new Error(`${connection.name} 请求失败（${response.status}）${hints[response.status] ? '：' + hints[response.status] : '，请检查密钥、模型 ID 与接口参数。'}`), { status: response.status });
   }
   let received = false;
   const emit = text => { if (typeof text === 'string' && text) { received = true; onText(text); } };

@@ -34,8 +34,12 @@ function startModelServer() {
     requests.push({ url: req.url, body });
     const n = requests.length;
     if (n === 3) {                      // 第三次：故意失败，用来验证旧答案不被丢掉
-      res.writeHead(500, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ error: { message: '模拟上游故障' } }));
+      /* 用 401 而不是 500：500 属于可重试错误，会被 core/llm-retry.cjs 重试，
+         而重试发来的第 4 次请求会被这个假服务器当成"下一个正常请求"返回 200，
+         于是"失败"变成"成功"，这条测试就再也验不到失败分支。
+         401 不可重试，才能真正走到「重跑失败、旧答案保留」那条路径。 */
+      res.writeHead(401, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: { message: '模拟鉴权失败（不可重试）' } }));
       return;
     }
     if (n === 4) await new Promise(r => setTimeout(r, 1800));   // 第四次：慢，用于生成中重跑

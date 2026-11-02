@@ -12,6 +12,7 @@ const { createRun, runCollaboration } = require('./core/collaboration.cjs');
 const { externalURL } = require('./core/links.cjs');
 const connections = require('./core/connections.cjs');
 const { runCustom, listModels } = require('./core/custom-provider.cjs');
+const llmRetry = require('./core/llm-retry.cjs');
 const research = require('./core/research.cjs');
 const retrieval = require('./core/retrieval.cjs');
 const citation = require('./core/citation.cjs');
@@ -702,7 +703,9 @@ async function sendTurn(id, text, { appendUser = true, retryOf = null, resumeFro
           call: async ({ provider, choice, messages, signal, onText, outputSchema }) => {
             const selected = choice || selectedConfig[provider];
             const scoped = { ...snapshot, ...(provider === 'gpt' ? { gptModel: selected.model, gptEffort: selected.effort } : provider === 'deepseek' ? { deepseekModel: selected.model, deepseekEffort: selected.effort } : {}) };
-            const args = { conversation: context, settings: scoped, signal, onText, messages, cwd: c.cwd && fs.existsSync(c.cwd) ? c.cwd : dataRoot };
+            const args = { conversation: context, settings: scoped, signal, messages, cwd: c.cwd && fs.existsSync(c.cwd) ? c.cwd : dataRoot };
+            /* usage.calls 在这里加一次，而不是每次尝试加一次：重试要对上层（预算、界面计数）透明，
+               否则一次 429 吃掉三格额度，预算耗尽就成了「网络差」的副作用。 */
             usage.calls += 1;
             /* 用量按 `provider:model` 分开记：一轮科研会同时用到好几个通道，
                只有分开记才谈得上按各自单价算钱（合计 token 无法反推单价）。 */
@@ -714,11 +717,31 @@ async function sendTurn(id, text, { appendUser = true, retryOf = null, resumeFro
               /* 实时推给界面：运行中就能看到 token 与花费在涨，不用等整轮结束。 */
               sendEvent({ type: 'usage', conversationId: id, messageId: reply.id, usage: { ...usage } });
             };
-            if (provider === 'deepseek') return providers.runDeepseek({ ...args, key: providers.deepseekKey(scoped, decrypt).key, onUsage: countUsage });
-            if (provider !== 'gpt') { const connection = snapshot.connections.find(c => c.id === provider); return runCustom({ ...args, connection, choice: selected, key: connection.encryptedKey ? decrypt(connection.encryptedKey) : '' }); }
-            const schemaFile = outputSchema ? path.join(dataRoot, 'schema-' + randomUUID() + '.json') : undefined;
-            if (schemaFile) fs.writeFileSync(schemaFile, JSON.stringify(outputSchema));
-            try { return await providers.runCodex({ ...args, outputSchemaPath: schemaFile }); } finally { if (schemaFile) try { fs.unlinkSync(schemaFile); } catch { /* cancelled process */ } }
+            /* 已经吐出去的正文：重试会把半截答案再叠一遍，正文里就出现两段重复内容。
+               所以只要这次尝试出过字就不再重试——宁可报错，也不交付一份叠字稿。 */
+            let emitted = false;
+            const forward = text => { if (typeof text === 'string' && text) emitted = true; if (typeof onText === 'function') onText(text); };
+            const attemptArgs = { ...args, onText: forward };
+            const attemptCall = async () => {
+              if (provider === 'deepseek') return providers.runDeepseek({ ...attemptArgs, key: providers.deepseekKey(scoped, decrypt).key, onUsage: countUsage });
+              if (provider !== 'gpt') { const connection = snapshot.connections.find(c => c.id === provider); return runCustom({ ...attemptArgs, connection, choice: selected, key: connection.encryptedKey ? decrypt(connection.encryptedKey) : '' }); }
+              const schemaFile = outputSchema ? path.join(dataRoot, 'schema-' + randomUUID() + '.json') : undefined;
+              if (schemaFile) fs.writeFileSync(schemaFile, JSON.stringify(outputSchema));
+              try { return await providers.runCodex({ ...attemptArgs, outputSchemaPath: schemaFile }); } finally { if (schemaFile) try { fs.unlinkSync(schemaFile); } catch { /* cancelled process */ } }
+            };
+            /* 一次 429 或网络抖动不该报废整轮科研：前面所有环节的调用费都压在这一次请求上。
+               判定与退避在 core/llm-retry.cjs（main.cjs 依赖 electron，那边才测得了）；
+               重试耗尽抛原错误，上层按 message 判断停止/失败的那套逻辑不受影响。 */
+            return llmRetry.withRetry(attemptCall, {
+              signal,
+              canRetry: () => !emitted,
+              onRetry: ({ attempt, reason, waitMs }) => {
+                sendEvent({ type: 'llm-retry', conversationId: id, messageId: reply.id, attempt, reason, waitMs });
+                /* 过程轨迹里也留一条：llm-retry 目前没有专门的渲染分支，
+                   monitor 通道是现成的、用户看得见的位置（iris-ui 会显示 reason）。 */
+                sendEvent({ type: 'collaboration', conversationId: id, messageId: reply.id, event: { kind: 'monitor', where: '模型调用重试', decision: { at: Date.now(), kind: 'retry', severity: 'info', action: 'retry', reason: `第 ${attempt} 次重试（${reason}，${Math.round(waitMs / 100) / 10}s 后）` } } });
+              }
+            });
           },
           onChange: event => {
             if (event.kind === 'plan') Object.assign(reply, { provider: event.writer, ...selectedConfig[event.writer] });
