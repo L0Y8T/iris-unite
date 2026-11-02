@@ -616,6 +616,27 @@ async function runResearch({ conversation, config, run, signal, call, onChange =
    * 因为它们是同一环节的多次往返，不该按调用数重复计价——成本按 token 看，
    * 而 token 已经因为装配而大幅下降。
    */
+  /* 装配预算：原本写死在 context.cjs 的 DEFAULT_LIMITS 里，用户完全调不了。
+     这有两个后果：材料小时全内联、工具循环形同虚设；材料大时想强制溢出也没开关。
+     现在允许用 config.harness.assemble 覆盖任意一项，非法值一律忽略并退回默认——
+     预算写错不该让一整轮研究发不出去。 */
+  function assembleLimits() {
+    const raw = config?.harness?.assemble;
+    if (!raw || typeof raw !== 'object') return {};
+    const limits = {};
+    for (const key of ['total', 'itemInline', 'itemHead', 'itemTail']) {
+      const value = Number(raw[key]);
+      if (Number.isInteger(value) && value > 0) limits[key] = value;
+    }
+    /* 头 + 尾超过单项可内联上限时，溢出项会比内联项还长——那不是节省，是荒诞。
+       这种情况把尾部收窄到 0，交给默认的头部策略。 */
+    if (limits.itemHead && limits.itemInline && limits.itemHead + (limits.itemTail || 0) >= limits.itemInline) {
+      limits.itemTail = 0;
+      if (limits.itemHead >= limits.itemInline) limits.itemHead = Math.max(1, Math.floor(limits.itemInline / 2));
+    }
+    return limits;
+  }
+
   function toolCapabilities() {
     const caps = { checkIntegrity: () => workspace.verifyArtifacts() };
     if (typeof verifyExperiments === 'function') {
@@ -653,7 +674,7 @@ async function runResearch({ conversation, config, run, signal, call, onChange =
     let streamed = '';
     try {
       const parts = buildParts();
-      const assembled = assemble({ task: prompt, question, parts });
+      const assembled = assemble({ task: prompt, question, parts, limits: assembleLimits() });
       const box = createToolbox({ workspace, capabilities: toolCapabilities() });
       const protocol = renderProtocol({ tools: box.specs(), maxSteps });
       emit({ kind: 'context', digest: assembled.digest, ...assembled.stats, spill: assembled.spill.length });
