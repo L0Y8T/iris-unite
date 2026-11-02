@@ -111,15 +111,30 @@
 
 | 期 | 内容 | 验收 |
 |---|---|---|
-| M0 | 工作区、账本、上下文装配 | `tests/harness-core.test.cjs` 15 项 |
-| M1 | 工具注册表、协议、循环、文件与核验工具 | `tests/harness-loop.test.cjs` 19 项 |
+| M0 | 工作区、账本、上下文装配 | `tests/harness-core.test.cjs` 17 项 |
+| M1 | 工具注册表、协议、循环、文件与核验工具 | `tests/harness-loop.test.cjs` 23 项 |
 | M2 | 异步 job 调度（并发上限、排队、取消、心跳、崩溃恢复） | `tests/harness-jobs.test.cjs` 10 项 |
 | M2b | 实验并行 + trial 心跳 + 产物落盘 | `tests/experiment-concurrency.test.cjs` 5 项、`tests/harness-workspace-integration.test.cjs` 4 项 |
-| M3 | 收口环节跑在 loop 上；普通协作材料走装配 | `tests/harness-final-tools.test.cjs` 3 项、`tests/harness-collaboration.test.cjs` 4 项 |
+| M3 | 收口环节跑在 loop 上；普通协作材料走装配 | `tests/harness-final-tools.test.cjs` 4 项、`tests/harness-collaboration.test.cjs` 4 项 |
 | M4 | 前端：工具事件、装配摘要、产物指纹 | `frontend-check` + `dsh-visual-check`（axe 0 违规） |
 | M5 | 文档、CHANGELOG、全量验收 | `npm run test:all -- --skip-live` 16 项全绿 |
+| **1.1** | 重试、并行安全、门禁、账本导出、装配预算可配 | `npm test` 329 项 + 两次真实模型实证 |
 
-已完成到 M5。**未做（有意留白）**：非收口环节也接工具循环。理由见下。
+已完成到 M5 与 1.1 前五条。
+
+### 一条实测结论：装配预算决定工具循环的死活
+
+真调 `deepseek-flash` 跑同一份 p1-review 配置，只改 `harness.assemble.itemInline`：
+
+| | 6000（默认） | 2000 |
+|---|---|---|
+| 溢出项 | 0 | 4 |
+| 模型工具调用 | 0 | **4 次 read_artifact，全成功、均 13ms** |
+| harnessSteps | 1 | 2 |
+
+**材料不溢出，模型就没有理由调工具，工具循环等于死代码。**
+这解释了 1.0 上线后真实账本里 `tool.call` 一条都没有——不是循环坏了，是预算太大、材料太小。
+所以 `harness.assemble` 必须可配：它不只是省钱开关，更是**工具循环的开关**。
 
 ### 为什么只给收口环节开工具
 
