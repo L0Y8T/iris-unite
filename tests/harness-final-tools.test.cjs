@@ -116,8 +116,7 @@ test('收口环节走装配 + 工具循环：材料是装配文本，工具能�
   assert.match(workspace.readArtifact(finals[0].id).text, /基线只降低方差/);
 });
 
-test('模型不调工具时，收口就是一次普通调用，正文照常流式产出', async () => {
-  const config = makeConfig();
+test('模型不调工具时，收口就是一次普通调用，正文照常流式产出', async () => {  const config = makeConfig();
   const run = research.createRun(config);
   const workspace = openWorkspace({ root: fs.mkdtempSync(path.join(os.tmpdir(), 'iris-final2-')), runId: ids.newRunId() });
   const streamed = [];
@@ -167,4 +166,41 @@ test('关闭 harness.tools 时退回 0.6 的全量 JSON 路径', async () => {
 
   assert.match(finalPayload, /协作资料（JSON 数据/, '关闭后应回到 0.6 的 JSON 材料格式');
   assert.ok(!finalPayload.includes('【工具协议】'), '关闭后不该出现工具协议');
+});
+
+test('收口循环的每一步都进账本：工具调用与收尾都留痕', async () => {
+  /* 这条守的是一个真实缺陷：2026-11-02 的 1.0 里，requestWithTools 没有把账本
+     传给 runAgentLoop，于是工具往返与收尾全都不留痕——事后查账本会得出
+     "工具从未被调用"的错误结论。 */
+  const config = makeConfig();
+  const run = research.createRun(config);
+  const workspace = openWorkspace({ root: fs.mkdtempSync(path.join(os.tmpdir(), 'iris-final4-')), runId: ids.newRunId() });
+
+  const call = async a => {
+    if (a.stage === 'research-scope') return a.onText(JSON.stringify({ objective: 'o', questions: ['q'], queries: ['q'], inclusion: ['x'], exclusion: ['y'] }));
+    if (a.stage === 'research-plan') return a.onText(JSON.stringify({ objective: 'o', tasks: [{ id: 'task-1', assignment: 'a', deliverable: 'b', evidenceKeys: [] }], selectionCriteria: 'c' }));
+    if (a.stage === 'research-explore') return a.onText('探索');
+    if (a.stage === 'research-screen') return a.onText(JSON.stringify({ selectedIds: ['task-1'], refineIds: [], feedback: '', reason: 'ok', unsupported: [] }));
+    if (a.stage === 'research-final') {
+      const already = a.messages.some(message => String(message.content).includes('【工具结果】'));
+      if (!already) return a.onText('先看看有什么。\n```tool\n{"calls":[{"name":"list_artifacts","args":{}}]}\n```');
+      return a.onText('按材料给答案。');
+    }
+    throw new Error('不该调用：' + a.stage);
+  };
+
+  await research.runResearch({
+    conversation, config, run, signal: new AbortController().signal,
+    knowledge: emptyKnowledge(), call, workspace, verifyExperiments: () => null
+  });
+
+  const types = workspace.ledger.read().entries.map(entry => entry.type);
+  assert.ok(types.includes('tool.call'), `账本里必须有 tool.call，实际只有 ${types.join('、')}`);
+  assert.ok(types.includes('loop.final'), `账本里必须有 loop.final，实际只有 ${types.join('、')}`);
+
+  const toolEntry = workspace.ledger.read().entries.find(entry => entry.type === 'tool.call');
+  assert.equal(toolEntry.name, 'list_artifacts');
+  assert.equal(toolEntry.ok, true);
+  assert.equal(toolEntry.stage, 'research-final');
+  assert.ok(toolEntry.runId, '账本条目要带 runId');
 });

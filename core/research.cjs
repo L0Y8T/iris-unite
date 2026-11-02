@@ -25,6 +25,9 @@ const { createToolbox } = require('./harness/tools/index.cjs');
 const { renderProtocol } = require('./harness/protocol.cjs');
 const { runAgentLoop } = require('./harness/loop.cjs');
 const { summarize } = require('./harness/workspace.cjs');
+/* 1.1 阶段准入：环节一产出就挂起来，推进到下一环节之前先过机械检查。
+   默认关闭（config.harness.gates === true 才启用），不改动既有的事后门禁。 */
+const { DEFAULT_GATES, runGates, GATE_FAILED } = require('./harness/gates.cjs');
 
 /* 环节定义。kind=model 的环节调用模型并消耗预算；kind=local 的环节只在本地计算。
    order 是执行顺序，界面按这个顺序画架构图。 */
@@ -460,8 +463,43 @@ async function runResearch({ conversation, config, run, signal, call, onChange =
     skippedStages: plannedSkips.map(s => s.id)
   });
 
+  /* ── 阶段准入（1.1）─────────────────────────────────────────────────────
+     只在 config.harness.gates === true 时启用，默认关闭，既有行为完全不变。
+     机制是"攒一份、推进前验"：环节刚产出时把产出挂起（noteGateOutput），
+     下一次 stage() 推进时才真正跑门禁（passGate）——这样检查点全部落在
+     环节边界上，不插进任何环节内部，也不改变编排结构。
+     不通过：发 { kind:'gate', ok:false, failures } 事件、记账、抛错中断本轮。
+     通过：只记账，不发事件（不打扰界面，也不打扰用户）。 */
+  const gatesEnabled = config?.harness?.gates === true;
+  let pendingGate = null;
+  const noteGateOutput = (stageId, payload) => { if (gatesEnabled) pendingGate = { stage: stageId, payload }; };
+  const passGate = () => {
+    if (!pendingGate) return;
+    const { stage: stageId, payload } = pendingGate;
+    pendingGate = null;
+    const result = runGates(DEFAULT_GATES, { stage: stageId, payload });
+    const failures = result.results.filter(item => !item.ok);
+    const record = { stage: stageId, ok: result.ok, checked: result.results.length, failures, at: Date.now() };
+    if (!Array.isArray(run.gates)) run.gates = [];
+    run.gates.push(record);
+    /* 记账：跑记录里一条，工作区账本里一条（没有工作区就只记在 run 上）。 */
+    if (workspace && typeof workspace.appendLedger === 'function') {
+      try { workspace.appendLedger('gate.check', { stage: stageId, ok: result.ok, checked: record.checked, failed: failures.map(item => item.id) }); }
+      catch { /* 记账失败不改变门禁结论 */ }
+    }
+    if (result.ok) return;
+    emit({ kind: 'gate', stage: stageId, ok: false, failures });
+    const reason = failures.map(item => `${item.message}${item.detail ? `（${item.detail}）` : ''}`).join('；');
+    const error = new Error(`阶段准入未通过（${stageId}）：${reason}`);
+    error.code = GATE_FAILED;
+    error.gate = { stage: stageId, failures };
+    throw error;
+  };
+
   const stage = (id, count) => {
     active();
+    /* 推进前先过上一个环节的门禁：坏产出不许进入下一个环节。 */
+    passGate();
     const index = run.stages.findIndex(s => s.id === id);
     if (index < 0) return;
     Object.assign(run, { stage: id, stageLabel: run.stages[index].label, stageIndex: index + 1, completedTasks: 0, totalTasks: count });
@@ -627,6 +665,18 @@ async function runResearch({ conversation, config, run, signal, call, onChange =
         toolbox: box,
         limits: { maxSteps },
         signal: combined,
+        /* 把工作区账本接到循环上。不接的话，工具往返与每轮收尾都不留痕，
+           事后无法回答"这一轮模型到底调了什么工具、走了几步、卡在哪一步"——
+           而这正是账本存在的理由。workspace.appendLedger 自己会补 runId，
+           这里只做接口适配；记账失败不阻断循环（账本是旁路，不是主路）。 */
+        ledger: workspace.appendLedger
+          ? {
+            append: (type, fields) => {
+              try { workspace.appendLedger(type, { provider: selected.provider, stage: run.stage, ...fields }); }
+              catch { /* 账本写失败不能让这一轮报废 */ }
+            }
+          }
+          : null,
         onEvent: event => {
           run.lastActivityAt = Date.now();
           emit({ kind: 'tool', step: event.step, name: event.name, ok: event.ok, ms: event.ms, args: event.args, error: event.error, chars: event.chars });
@@ -833,6 +883,8 @@ async function runResearch({ conversation, config, run, signal, call, onChange =
         analysis = { comparison: '结果分析失败', continue: false, why: String(error?.message || error).slice(0, 300), conclusion: '本轮未能完成结果分析', boundaries: ['结果分析失败'] };
       }
       emit({ kind: 'experiment-analyze', round: roundNo, analysis });
+      /* 结论里的数字必须是本轮真跑出来的：下一轮调参或进实验记录之前先验。 */
+      noteGateOutput('experiment-analyze', { conclusion: analysis?.conclusion, manifests: roundRuns });
       rounds.push({ round: roundNo, summary, analysis });
 
       if (!analysis?.continue || roundNo >= plan.maxRounds) break;
@@ -882,6 +934,7 @@ async function runResearch({ conversation, config, run, signal, call, onChange =
     if (!scope || !safeText(scope.objective)) throw new Error('这一轮没有可沿用的研究界定，无法直接执行实验（请重新生成一轮完整研究）');
     run.scope = scope;
     emit({ kind: 'research-scope', scope, queriesFallback: scope.queriesFallback === true, carriedOver: !hasNode('research-scope') });
+    if (hasNode('research-scope')) noteGateOutput('research-scope', { objective: scope.objective, questions: scope.questions });
 
     /* ── 2. 资料检索：真实检索，本地环节，不消耗预算 ───────────────────── */
     if (hasNode('research-sources')) {
@@ -977,6 +1030,7 @@ async function runResearch({ conversation, config, run, signal, call, onChange =
         emit({ kind: 'research-evidence', evidence });
       }
     }
+    if (hasNode('research-evidence')) noteGateOutput('research-evidence', { claims: evidence?.claims || [] });
 
     /* ── 3.5 要点汇总：速查档的收口环节，把证据收成带引用的短答案 ─────── */
     let summary = null;
@@ -1132,6 +1186,9 @@ async function runResearch({ conversation, config, run, signal, call, onChange =
       try {
         experimentResult = await runExperimentFamily({ scope, evidence, researchPlan: run.researchPlan, selection: run.selection });
       } catch (error) {
+        /* 实验族的容错只覆盖"实验本身跑不成"；阶段准入失败必须中断本轮，
+           不能被这层兜底改写成一条 notice 后继续往下走。 */
+        if (error?.code === GATE_FAILED) throw error;
         /* 实验族整体出错不能把已有研究一起丢掉：记下来，让整合与自检如实说明。 */
         experimentResult = { skipped: false, error: String(error?.message || error).slice(0, 400), runs: [], rounds: [] };
         emit({ kind: 'artifact', artifact: { id: randomUUID(), stage: 'experiment-report', stageLabel: '实验记录', kind: 'notice', status: 'error', text: `实验族未能完成：${experimentResult.error}`, startedAt: Date.now(), finishedAt: Date.now() } });
@@ -1160,6 +1217,7 @@ async function runResearch({ conversation, config, run, signal, call, onChange =
     } else {
       finalText = await request(config.choices.final, finalPrompt, finalMaterials, { final: true });
     }
+    noteGateOutput('research-final', { text: finalText });
     }
 
     /* 计划里没有任何收口环节时，必须明确失败，而不是把空正文当答案发出去。 */
