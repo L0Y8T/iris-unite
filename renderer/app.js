@@ -815,6 +815,10 @@ async function init() {
   renderTheme();
   try {
     const data = await window.duet.init(); state.settings = data.settings; state.catalog = data.modelCatalog; state.local = data.conversations; applyCatalog(data); state.config = clone(data.settings.defaultModelConfig); state.researchConfig = clone(data.settings.defaultResearchConfig); state.models = defaultModels();
+    /* 标题栏版本号由主进程给（app.getVersion()），不再写死在 index.html —— 
+       那个写死的 0.6 在升到 1.1 后还挂着，用户看到就以为装的还是老版本。 */
+    const versionEl = document.querySelector('[data-app-version]');
+    if (versionEl) versionEl.textContent = String(data.settings?.version || '').trim();
     const remembered = localStorage.getItem('duet-workspace'); if (state.workspaces.some(w => w.id === remembered)) state.selectedWorkspace = remembered;
     const expanded = state.selectedWorkspace === 'all' ? state.workspaces[0]?.id : state.selectedWorkspace; if (expanded) state.expanded.add(expanded);
     renderChat(); await refreshHistory();

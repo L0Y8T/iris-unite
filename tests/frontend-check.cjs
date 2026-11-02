@@ -243,6 +243,13 @@ exports.run = async (win, root, store) => {
   await js('document.querySelector("[data-model-options=gpt]").click()'); await capture('v5-power-light.png');
   assert.deepEqual(await js('window.__frontendErrors'), []);
   assert.deepEqual(await js('window.__irisErrors'), []);
-  const report = { passed: true, version: '1.1.1', gptModelVisible: name, widths, axeAudits: audits.map(({name, passes, violations}) => ({name,passes,violations:violations.length})), checks: ['light and dark themes','concrete model names','Power keyboard and focus return','last-model toast','workspaces and history','real saved cooperation record','collapsed process default','safe Markdown tables and code copy','empty, loading and error states','narrow sidebar drawer','no runtime console errors'], liveChecks: process.env.IRIS_LIVE_TEST === '1' ? 'iris-ui-check ran' : 'iris-ui-check skipped (set IRIS_LIVE_TEST=1; 0.6 流程断言尚未重写)', note: '隔离数据的界面回归。不发起任何真实模型请求，除非设置 IRIS_LIVE_TEST=1。' };
+  /* 标题栏版本号必须跟 package.json 一致。这条守的是一个真事故：
+     index.html 里曾写死 <span>0.6</span>，升到 1.x 后标题栏还挂着 0.6，
+     用户打开程序看到的就是「还是 0.6」——程序其实是新的。 */
+  const displayedVersion = String(await js('document.querySelector("[data-app-version]")?.textContent || ""')).trim();
+  const expectedVersion = JSON.parse(await fs.readFile(path.join(__dirname, '../package.json'), 'utf8')).version;
+  assert.ok(displayedVersion, '标题栏必须显示版本号');
+  assert.equal(displayedVersion, expectedVersion, `标题栏显示 ${displayedVersion}，但 package.json 是 ${expectedVersion}`);
+  const report = { passed: true, version: displayedVersion, gptModelVisible: name, widths, axeAudits: audits.map(({name, passes, violations}) => ({name,passes,violations:violations.length})), checks: ['light and dark themes','concrete model names','Power keyboard and focus return','last-model toast','workspaces and history','real saved cooperation record','collapsed process default','safe Markdown tables and code copy','empty, loading and error states','narrow sidebar drawer','no runtime console errors'], liveChecks: process.env.IRIS_LIVE_TEST === '1' ? 'iris-ui-check ran' : 'iris-ui-check skipped (set IRIS_LIVE_TEST=1; 0.6 流程断言尚未重写)', note: '隔离数据的界面回归。不发起任何真实模型请求，除非设置 IRIS_LIVE_TEST=1。' };
   await fs.writeFile(path.join(artifacts, 'v5-frontend-test.json'), JSON.stringify(report, null, 2)); console.log(JSON.stringify(report));
 };

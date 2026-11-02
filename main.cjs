@@ -242,6 +242,10 @@ function publicSettings() {
   let credential = { source: '未配置', key: '' };
   try { credential = providers.deepseekKey(settings, decrypt); } catch { /* encrypted key unavailable */ }
   return {
+    /* 版本号由主进程给：标题栏那个「Iris Unite 0.6」曾经是写死在 index.html 里的，
+       升到 1.x 之后它还挂着 0.6，用户看到的就是「程序还是 0.6」。
+       现在从打包进 asar 的 package.json 读，升版本只改一处。 */
+    version: app.getVersion(),
     deepseekModel: settings.deepseekModel,
     gptModel: settings.gptModel,
     useDshKey: settings.useDshKey,
