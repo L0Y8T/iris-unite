@@ -1,4 +1,4 @@
-const { app, BrowserWindow, Menu, ipcMain, safeStorage, dialog, clipboard, shell } = require('electron');
+const { app, BrowserWindow, Menu, ipcMain, safeStorage, dialog, clipboard, shell, screen } = require('electron');
 const path = require('node:path');
 const fs = require('node:fs');
 const { Worker } = require('node:worker_threads');
@@ -988,12 +988,46 @@ app.whenReady().then(async () => {
 async function createWindow() {
   /* 图标只查一次：platformAssets 会挨个 existsSync，写两遍就是双倍盘查询。 */
   const assets = platformAssets();
+  /* 尺寸按当前屏幕算，不按设计稿算：1366×768 的笔记本装不下 920 高，
+     150% 缩放的 1920×1080 工作区只有 1280×672（DIP），1380 宽会超出屏幕。
+     上次关窗时的位置若还在某块屏上就恢复，否则主屏居中。 */
+  const savedBounds = platform.sanitizeWindowBounds(settings.windowBounds);
+  const bounds = platform.resolveWindowBounds({
+    displays: screen.getAllDisplays(),
+    saved: savedBounds,
+    preferred: platform.PREFERRED_WINDOW
+  });
   win = new BrowserWindow({
-    title: 'Iris Unite', width: 1380, height: 920, minWidth: 940, minHeight: 660,
+    title: 'Iris Unite',
+    width: bounds.width, height: bounds.height, minWidth: bounds.minWidth, minHeight: bounds.minHeight,
+    ...(Number.isFinite(bounds.x) && Number.isFinite(bounds.y) ? { x: bounds.x, y: bounds.y } : {}),
     ...platform.windowOptions(),
     backgroundColor: '#ffffff', ...(assets.icon ? { icon: assets.icon } : {}), show: false,
     webPreferences: { preload: path.join(__dirname, 'preload.cjs'), contextIsolation: true, nodeIntegration: false, sandbox: true, spellcheck: false, offscreen: frontendTest, backgroundThrottling: !frontendTest }
   });
+  if (savedBounds && savedBounds.maximized) win.maximize();
+  /* 记住用户调过的窗口大小与位置。防抖 800ms：拖动窗口会连续触发 resize/move，
+     每次都写 settings.json 既慢又浪费（saveSettings 还会重建模型目录）。 */
+  let boundsTimer = null;
+  const rememberBounds = () => {
+    if (smoke || frontendTest) return;
+    if (!win || win.isDestroyed()) return;
+    clearTimeout(boundsTimer);
+    boundsTimer = setTimeout(() => {
+      if (!win || win.isDestroyed()) return;
+      try {
+        const normal = typeof win.getNormalBounds === 'function' ? win.getNormalBounds() : win.getBounds();
+        const next = platform.sanitizeWindowBounds({ ...normal, maximized: win.isMaximized() });
+        if (!next) return;
+        settings.windowBounds = next;
+        saveSettings(settings);
+      } catch { /* 记不住窗口位置不该影响使用 */ }
+    }, 800);
+  };
+  win.on('resize', rememberBounds);
+  win.on('move', rememberBounds);
+  win.on('maximize', rememberBounds);
+  win.on('unmaximize', rememberBounds);
   if (platform.needsApplicationMenu()) {
     Menu.setApplicationMenu(Menu.buildFromTemplate([{ role: 'appMenu' }, { role: 'editMenu' }, { role: 'viewMenu' }, { role: 'windowMenu' }]));
   } else {

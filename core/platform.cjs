@@ -95,6 +95,96 @@ function needsApplicationMenu(platform = process.platform) {
   return platform === 'darwin';
 }
 
+/* ── 窗口尺寸自适应 ────────────────────────────────────────────────────
+ *
+ * 原来窗口写死 1380×920、最小 940×660。在 1366×768 的笔记本上，
+ * 高度 920 比整块屏幕还高；在 150% 缩放的 1920×1080 上，工作区只有 1280×640（单位是 DIP），
+ * 1380 宽直接超出屏幕。两头的症状一样：窗口一开就有一块在屏幕外，用户还得手动挪。
+ *
+ * 所以尺寸要按当前屏幕的工作区算，而不是按设计稿算。
+ */
+
+const PREFERRED_WINDOW = Object.freeze({ width: 1380, height: 920, minWidth: 940, minHeight: 660 });
+
+/**
+ * 按工作区把首选尺寸收进屏幕内。
+ * 单位是 DIP（Electron 的 workArea 本来就是 DIP），所以在任何系统缩放下都成立。
+ * 留出 margin 是为了窗口周围还能看见桌面、以及不被任务栏/任务切换边缘吸附。
+ */
+function fitWindowToScreen(workArea, preferred = PREFERRED_WINDOW, margin = 0.92) {
+  const areaWidth = Math.max(320, Math.floor(Number(workArea?.width) || 0));
+  const areaHeight = Math.max(240, Math.floor(Number(workArea?.height) || 0));
+  const maxWidth = Math.max(320, Math.floor(areaWidth * margin));
+  const maxHeight = Math.max(240, Math.floor(areaHeight * margin));
+  /* 最小尺寸绝不能超过屏幕：一旦超过，窗口就再也缩不回屏幕内。减 24 给边框与阴影留余地。 */
+  const minWidth = Math.max(320, Math.min(preferred.minWidth, areaWidth - 24));
+  const minHeight = Math.max(240, Math.min(preferred.minHeight, areaHeight - 24));
+  const width = Math.max(minWidth, Math.min(preferred.width, maxWidth));
+  const height = Math.max(minHeight, Math.min(preferred.height, maxHeight));
+  return { width, height, minWidth, minHeight };
+}
+
+/** 在工作区内居中。工作区原点可能是负的（副屏摆在主屏左边/上面）。 */
+function centerWindowIn(workArea, size) {
+  const x = Math.round((Number(workArea?.x) || 0) + Math.max(0, (Number(workArea?.width) || 0) - size.width) / 2);
+  const y = Math.round((Number(workArea?.y) || 0) + Math.max(0, (Number(workArea?.height) || 0) - size.height) / 2);
+  return { x, y };
+}
+
+/**
+ * 决定这一次开窗用多大、放哪里。
+ *
+ * 优先级：上次的尺寸位置（若当前显示器仍在）> 主屏居中。
+ * 判断"仍在"的条件是标题栏必须可见——哪怕只露出 80×24：
+ * 换过显示器、拔掉副屏、改过缩放的机器上，上次保存的坐标会把窗口放到看不见的地方。
+ */
+function resolveWindowBounds({ displays = [], saved = null, preferred = PREFERRED_WINDOW, margin = 0.92 } = {}) {
+  const usable = (Array.isArray(displays) ? displays : []).filter(d => d && d.workArea && d.workArea.width > 0);
+  const primaryArea = usable[0]?.workArea || { x: 0, y: 0, width: 1440, height: 900 };
+  const fitted = fitWindowToScreen(primaryArea, preferred, margin);
+
+  if (saved && Number.isFinite(Number(saved.width)) && Number.isFinite(Number(saved.height))) {
+    const wanted = { width: Math.round(Number(saved.width)), height: Math.round(Number(saved.height)) };
+    const host = usable.find(d => {
+      const a = d.workArea;
+      const sx = Number(saved.x);
+      const sy = Number(saved.y);
+      if (!Number.isFinite(sx) || !Number.isFinite(sy)) return false;
+      /* 标题栏区域（顶部 24px）必须落在工作区内，用户才抓得到窗口。 */
+      const titleBarVisible = sx + 80 > a.x && sx < a.x + a.width && sy + 24 > a.y && sy < a.y + a.height;
+      return titleBarVisible;
+    });
+    if (host) {
+      const a = host.workArea;
+      const limits = fitWindowToScreen(a, { ...preferred, width: wanted.width, height: wanted.height }, margin);
+      const width = Math.max(limits.minWidth, Math.min(wanted.width, Math.floor(a.width * margin)));
+      const height = Math.max(limits.minHeight, Math.min(wanted.height, Math.floor(a.height * margin)));
+      const x = Math.round(Math.min(Math.max(Number(saved.x), a.x), a.x + a.width - width));
+      const y = Math.round(Math.min(Math.max(Number(saved.y), a.y), a.y + a.height - height));
+      return { ...limits, width, height, x, y, restored: true };
+    }
+  }
+
+  return { ...fitted, ...centerWindowIn(primaryArea, fitted), restored: false };
+}
+
+/** 窗口尺寸值不值得记住：太小、太怪的一律丢弃，宁可回到默认。 */
+function sanitizeWindowBounds(input) {
+  if (!input || typeof input !== 'object') return null;
+  const width = Math.round(Number(input.width));
+  const height = Math.round(Number(input.height));
+  const x = Math.round(Number(input.x));
+  const y = Math.round(Number(input.y));
+  if (!Number.isFinite(width) || !Number.isFinite(height)) return null;
+  if (width < 320 || height < 240 || width > 8000 || height > 5000) return null;
+  return {
+    width, height,
+    x: Number.isFinite(x) ? x : undefined,
+    y: Number.isFinite(y) ? y : undefined,
+    maximized: input.maximized === true
+  };
+}
+
 module.exports = {
   pythonCandidates,
   codexBinaryName,
@@ -105,5 +195,10 @@ module.exports = {
   primaryModifier,
   shortcutLabel,
   quitOnWindowClose,
-  needsApplicationMenu
+  needsApplicationMenu,
+  PREFERRED_WINDOW,
+  fitWindowToScreen,
+  centerWindowIn,
+  resolveWindowBounds,
+  sanitizeWindowBounds
 };
