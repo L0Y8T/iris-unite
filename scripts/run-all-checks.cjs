@@ -24,7 +24,7 @@ const only = onlyArg ? onlyArg.slice('--only='.length).split(',').map(s => s.tri
 
 /* live=true 表示会向真实模型发请求，消耗额度。 */
 const STEPS = [
-  { id: 'unit', name: '单元测试（212 项）', kind: 'npm', script: 'test', spend: '无', expect: 'fail 0', seconds: 75 },
+  { id: 'unit', name: '单元测试（node --test）', kind: 'npm', script: 'test', spend: '无', expect: 'fail 0', seconds: 75 },
   { id: 'hygiene', name: '仓库卫生（白名单与凭据）', kind: 'node', file: 'scripts/check-repo-hygiene.cjs', spend: '无', expect: '通过', seconds: 2 },
   { id: 'platform', name: '三平台分支与路径', kind: 'node', file: 'tests/platform.test.cjs', spend: '无', expect: 'fail 0', seconds: 3 },
   { id: 'platform-runtime', name: '平台注入到渲染进程', kind: 'node', file: 'tests/runtime-probe.cjs', spend: '无（隔离数据目录）', expect: '"passed": true', seconds: 15 },
@@ -92,9 +92,13 @@ const records = [];
 for (const [index, step] of plan.entries()) {
   process.stdout.write(`[${index + 1}/${plan.length}] ${step.name} … `);
   const result = runStep(step);
-  records.push({ id: step.id, name: step.name, ok: result.ok, seconds: result.seconds, spend: step.spend, reasons: result.reasons });
+  /* 单元测试的项数随测试增加而变。写在名字里迟早变成假数字（曾经写着「212 项」而实际更多），
+     所以改成从本轮输出里读：node --test 的 `ℹ pass 403`。读不到就不显示，不猜。 */
+  const passed = step.id === 'unit' ? Number((result.output.match(/^[^\d\n]*pass (\d+)/m) || [])[1]) || null : null;
+  const name = passed ? `${step.name}，本轮 ${passed} 项通过` : step.name;
+  records.push({ id: step.id, name, ok: result.ok, seconds: result.seconds, spend: step.spend, reasons: result.reasons });
   if (result.ok) {
-    console.log(`通过  ${result.seconds}s`);
+    console.log(`通过  ${result.seconds}s${passed ? `（${passed} 项）` : ''}`);
   } else {
     console.log(`失败  ${result.seconds}s  (${result.reasons.join('；')})`);
     const tail = result.output.split(/\r?\n/).filter(line => line.trim()).slice(-8);

@@ -21,7 +21,10 @@ function currentResearch() {
   if (!c.tier) c.tier = 'readonly';
   if (!c.budget) c.budget = { maxCalls: Number(c.maxCalls) || 8, wallClockSec: 900, modelTimeoutSec: 300, maxConcurrentModels: 2, maxModelRetryAttempts: 0, maxRepairAttempts: 0 };
   if (!c.refinement) c.refinement = { maxTasks: 2, maxPassesPerTask: 1 };
-  if (!c.teaching) c.teaching = { audience: '有基础的初学者', prerequisites: [], learningGoal: '理解概念及适用边界', chapterCount: 2, chapterChoices: {}, numericPolicy: 'builtin-arithmetic-only' };
+  if (!c.teaching) c.teaching = { audience: '有基础的初学者', prerequisites: [], learningGoal: '理解概念及适用边界', chapterCount: 2, maxPoints: 12, chapterChoices: {}, numericPolicy: 'builtin-arithmetic-only' };
+  if (!Number.isInteger(Number(c.teaching.chapterCount))) c.teaching.chapterCount = 2;
+  if (!Number.isInteger(Number(c.teaching.maxPoints))) c.teaching.maxPoints = 12;
+  if (!Array.isArray(c.teaching.prerequisites)) c.teaching.prerequisites = [];
   if (!c.evidence) c.evidence = { policyVersion: 1, requireSnippet: true, unsupportedPolicy: 'quarantine-block', allowGeneralTeaching: false };
   if (!Array.isArray(c.tasks)) c.tasks = [];
   c.version = 4;
@@ -60,6 +63,9 @@ const RESEARCH_STAGES = [
   ['screen', '候选筛选', '按证据、创新性与反例风险筛选候选'],
   ['experimentDesign', '实验设计', '把候选方向变成假设、指标、搜索空间与停止条件'],
   ['experimentAnalyze', '结果分析', '读真实指标，决定是否调参、调什么、何时停'],
+  ['teachingOutline', '知识点拆解', '把主题拆成最小知识点，标出先修关系与证据来源'],
+  ['teachingSections', '分阶段计划', '依赖图分层并合成学习阶段：目标、里程碑、自问清单与误区'],
+  ['teachingExamples', '自测题设计', '为每个知识点出可自我判定的题，附答案要点与判分口径'],
   ['final', '反证与整合', '检验证据与反例，形成唯一完整答案']
 ];
 
@@ -293,11 +299,16 @@ function renderPlanPreview() {
   const warnings = (effective.warnings || []).map(w => `<li>${esc(w.message)}</li>`).join('');
   const stages = plan.stages || [];
   const modelStages = stages.filter(s => s.type === 'model').length;
+  /* 学习阶段数就是 teaching-sections 的扇出：把它摊在预览里，用户才知道改数字会多花几次调用。 */
+  const teachingRow = plan.teaching
+    ? `<span>学习计划</span><strong>${plan.teaching.stageCount} 个阶段（分阶段写作 ${plan.teaching.stageCount} 次调用），知识点上限 ${plan.teaching.maxPoints} 个</strong>`
+    : '';
   return `<div class="plan-preview-grid">`
     + `<span>档位</span><strong>${esc(plan.profileName || plan.profile)}（Tier ${esc(plan.tier || 'readonly')}）</strong>`
     + `<span>环节</span><strong>${stages.length} 个环节，其中 ${modelStages} 个会调用模型；基准 ${plan.baseCalls ?? '-'} 次调用</strong>`
     + `<span>预算</span><strong>上限 ${plan.maxCalls} 次，为收口保留 ${plan.reserve} 次，可留 ${Math.max(0, plan.maxCalls - (plan.baseCalls || 0))} 次给可选环节</strong>`
     + `<span>检索</span><strong>${esc(sources)}</strong>`
+    + teachingRow
     + `<span>计划版本</span><strong>${esc(plan.planVersion || '-')}</strong>`
     + `</div>`
     + (problems ? `<p class="plan-preview-problem">还不能运行：</p><ul class="plan-preview-list">${problems}</ul>` : '')
@@ -320,7 +331,7 @@ function renderResearchForm() {
       + `</button>`;
   }).join('');
   $('#research-profile').innerHTML = `<div class="research-profile-heading"><strong>档位</strong><span>档位决定跑哪些环节、要几次调用；环节内部的模型仍然逐个可选。</span></div><div class="research-profile-options">${profileButtons}</div>`
-    + (implemented ? '' : `<p class="plan-preview-problem">教学档本期只做配置与计划预览，暂不能真正运行：分段生成、例题与算式校验在后续里程碑补齐。</p>`);
+    + (implemented ? '' : `<p class="plan-preview-problem">这个档位本期尚未实现，只能预览配置。</p>`);
   $('#research-plan-preview').innerHTML = renderPlanPreview();
   const stageRows = activeStageRows(c).map(([key, label]) => {
     const detail = (RESEARCH_STAGES.find(s => s[0] === key) || [key, label, ''])[2];
@@ -338,8 +349,22 @@ function renderResearchForm() {
       + `<div class="research-budget-inline"><label>最多运行次数<input id="experiments-trials" type="number" min="1" max="12" value="${Number(exp.maxTrials) || 4}"></label><label>最多调参轮次<input id="experiments-rounds" type="number" min="1" max="4" value="${Number(exp.maxRounds) || 2}"></label></div>`
       + `<p class="setting-help">停下来的条件：${esc(exp.stopWhen || '指标不再提升或达到 trial 上限')}。执行前会先建隔离环境，结果写进可核对的运行记录。</p></section>`
     : '';
+  /* 教学档的学习对象与目标：知识点拆解只依据这里的目标、受众与「已具备的基础」，
+     所以放在环节列表最前面——先定"给谁学、学到哪"，再谈分几个阶段。 */
+  const policy = meta.policy || {};
+  const [stageLo, stageHi] = policy.chapters || [2, 4];
+  const [pointLo, pointHi] = policy.teachingPoints || [3, 30];
+  const teach = c.teaching || {};
+  const teachingSection = c.profile === 'p2-teach'
+    ? `<section class="research-teaching"><div class="research-workers-heading"><div><h3>学习对象与目标</h3><p>先真实检索资料，再拆知识点、算依赖图、排阶段、出自测题。阶段数决定计划分几步走，知识点上限决定拆得多细。</p></div></div>`
+      + `<div class="research-budget-inline"><label>学习阶段数<input id="teaching-stages" type="number" min="${stageLo}" max="${stageHi}" value="${Number(teach.chapterCount) || 2}"></label><label>知识点上限<input id="teaching-points" type="number" min="${pointLo}" max="${pointHi}" value="${Number(teach.maxPoints) || (policy.teachingPointDefault || 12)}"></label></div>`
+      + `<label class="research-teaching-field">学习对象<input id="teaching-audience" maxlength="80" value="${esc(teach.audience || '')}" placeholder="例如：有 Python 基础、不熟悉概率图模型的工程师"></label>`
+      + `<label class="research-teaching-field">学习目标<input id="teaching-goal" maxlength="200" value="${esc(teach.learningGoal || '')}" placeholder="例如：能读懂扩散模型论文并自己实现一次采样"></label>`
+      + `<label class="research-teaching-field">已具备的基础<textarea id="teaching-known" rows="2" maxlength="600" placeholder="每行一条，例如：概率论基础">${esc((teach.prerequisites || []).join('\n'))}</textarea></label>`
+      + `<p class="setting-help">写了的基础会被机械匹配：命中的知识点不进主路径（但仍保留一道自测题确认）。匹配不到的词会如实列在计划的「已知缺口」里，不会被悄悄忽略。</p></section>`
+    : '';
   /* 顺序按 §15.1：档位（目标）→ 计划预览 → 模型分工 → 资料范围 → 预算 → 高级（复核）。 */
-  $('#research-architecture').innerHTML = `${stageRows}${tasks}<div class="architecture-arrow">${icon('down')}</div>${experimentSection}${retrievalSection}${auditRow}`;
+  $('#research-architecture').innerHTML = `${teachingSection}${stageRows}${tasks}<div class="architecture-arrow">${icon('down')}</div>${experimentSection}${retrievalSection}${auditRow}`;
   const plan = researchPlanCache;
   const base = plan?.baseCalls ?? 0;
   $('#research-budget').min = base || 1;
@@ -400,6 +425,18 @@ function collectResearchForm() {
     yearFrom: $('#retrieval-year-from').value ? Number($('#retrieval-year-from').value) : null,
     maxQueries: Number($('#retrieval-max-queries').value)
   };
+  /* 教学档的学习目标：切换档位后没渲染这块时，保留上一份值而不是清空。 */
+  if (next.profile === 'p2-teach' && $('#teaching-audience')) {
+    next.teaching = {
+      ...(next.teaching || {}),
+      audience: $('#teaching-audience').value.trim().slice(0, 80),
+      learningGoal: $('#teaching-goal').value.trim().slice(0, 200),
+      chapterCount: Number($('#teaching-stages').value) || 2,
+      maxPoints: Number($('#teaching-points').value) || 12,
+      /* 每行一条；空行丢掉，重复去掉，最多 12 条。 */
+      prerequisites: [...new Set($('#teaching-known').value.split('\n').map(line => line.trim()).filter(Boolean))].slice(0, 12)
+    };
+  }
   next.budget = { ...next.budget, maxCalls: Number($('#research-budget').value) };
   next.allowRefinement = info.refinementAllowed === true ? $('#research-refinement').checked : false;
   next.monitor = { enabled: $('#monitor-enabled').checked };
@@ -509,6 +546,28 @@ document.addEventListener('DOMContentLoaded', () => {
     researchDraft = collectResearchForm();
     const key = choiceChanged ? event.target.dataset.researchChoice : null;
     await refreshPlanPreview();
+    /* 有些改动会抬高本档基准，而预算是硬约束：基准一超过上限，编译器直接报
+       「调用上限需 ≥ 本档基准调用数 N 次」，预览就只剩这一句，用户不知道该填多少。
+       教学档的阶段数就是分阶段写作的扇出（2 阶段→4 阶段，基准从 7 涨到 9），
+       改一下数字就必然踩到。这里只在真的不够时介入：先放到硬上限算出基准，再按档位收紧。
+       用户自己填的更大预算不受影响——那种情况下编译器不会报这个错。 */
+    if (researchPlanCache?.ok === false && /调用上限需 ≥/.test(researchPlanCache.error || '')) {
+      const cap = researchMeta().policy?.maxCallsCap || 24;
+      /* 必须改 DOM 里的预算框：计划预览是拿表单现值去编译的，改 researchDraft 不生效。 */
+      const budgetInput = $('#research-budget');
+      const previous = budgetInput.value;
+      budgetInput.value = String(cap);
+      const plan = await refreshPlanPreview();
+      const base = plan?.baseCalls;
+      if (Number.isInteger(base) && base > 0) {
+        budgetInput.value = String(base + (profileInfo(researchDraft.profile).refinementAllowed ? 1 : 0));
+        researchDraft.budget = { ...researchDraft.budget, maxCalls: Number(budgetInput.value) };
+        await refreshPlanPreview();
+      } else {
+        budgetInput.value = previous;
+        await refreshPlanPreview();
+      }
+    }
     renderResearchForm();
     if (key) { const again = document.querySelector(`[data-research-choice="${CSS.escape(key)}"]`); if (again) again.focus(); }
   });

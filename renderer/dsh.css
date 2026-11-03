@@ -454,6 +454,10 @@ svg { stroke-width: 1.6; }
 .research-budget-inline { display: flex; flex-wrap: wrap; gap: 12px; }
 .research-budget-inline label { flex: 1 1 120px; font-size: 11px; color: var(--muted); }
 .research-budget-inline input { display: block; width: 100%; margin-top: 4px; border: .5px solid var(--line-bold); border-radius: var(--radius-sm); padding: 6px 8px; background: var(--surface); color: var(--ink); font-size: var(--text-xs); }
+/* 学习模式（教学档）：学习对象与目标。数字参数沿用上面的 budget-inline，文本字段单独给样式。 */
+.research-teaching { border: .5px solid var(--line-strong); border-radius: var(--radius-lg); background: var(--surface); padding: 16px; margin-bottom: 4px; }
+.research-teaching-field { display: block; font-size: 11px; color: var(--muted); margin-top: 12px; }
+.research-teaching-field input, .research-teaching-field textarea { display: block; width: 100%; margin-top: 4px; border: .5px solid var(--line-bold); border-radius: var(--radius-sm); padding: 6px 8px; background: var(--surface); color: var(--ink); font-size: var(--text-xs); font-family: inherit; resize: vertical; box-sizing: border-box; }
 .input-with-action { display: flex; gap: 6px; align-items: stretch; margin-top: 6px; }
 .input-with-action input { flex: 1; min-width: 0; margin-top: 0 !important; }
 .input-with-action .secondary-button { height: 34px; padding: 0 12px; font-size: var(--text-xs); white-space: nowrap; }

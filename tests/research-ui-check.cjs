@@ -86,8 +86,8 @@ async function freePort() {
     assert.equal(profiles.length, 3, '应有三档');
     assert.deepEqual(profiles.map(p => p.id), ['p0-query', 'p1-review', 'p2-teach']);
     const p2 = profiles.find(p => p.id === 'p2-teach');
-    assert.equal(p2.disabled, true, '教学档本期必须禁用');
-    assert.match(p2.text, /尚未实现/);
+    assert.equal(p2.disabled, false, '教学档已实现，必须可选');
+    assert.doesNotMatch(p2.text, /尚未实现/);
     const selected = profiles.find(p => p.selected);
     assert.equal(selected.id, 'p1-review', '默认应落在综述档');
 
@@ -121,6 +121,40 @@ async function freePort() {
     await delay(700);
     assert.match(preview1, /上限 \d+ 次/, '预览要给调用上限');
     assert.match(preview1, /为收口保留 \d+ 次/, '预览要说清保留额度');
+
+    /* 教学档（学习计划）：面板必须出现学习对象与目标，预览要交代阶段数与知识点上限。
+       阶段数就是分阶段写作的扇出，用户改这个数字要能当场看到调用数变化。 */
+    await js(`document.querySelector('[data-research-profile="p2-teach"]').click();true`);
+    await delay(900);
+    const p2ui = await js(`({
+      preview: document.querySelector('#research-plan-preview').textContent.replace(/\\s+/g,' '),
+      hasBlock: !!document.querySelector('.research-teaching'),
+      audience: document.querySelector('#teaching-audience')?.value || '',
+      goal: document.querySelector('#teaching-goal')?.value || '',
+      stages: document.querySelector('#teaching-stages')?.value,
+      points: document.querySelector('#teaching-points')?.value,
+      stageTitles: [...document.querySelectorAll('.research-stage:not(.research-stage-optional) h3')].map(h=>h.textContent.trim()),
+      min: document.querySelector('#research-min-calls').textContent.trim()
+    })`);
+    console.log('教学档界面:', JSON.stringify(p2ui));
+    assert.equal(p2ui.hasBlock, true, '教学档必须有学习对象与目标面板');
+    assert.equal(p2ui.stages, '2', '默认学习阶段数');
+    assert.equal(p2ui.points, '12', '默认知识点上限');
+    assert.ok(p2ui.audience.length > 0 && p2ui.goal.length > 0, '受众与目标必须带默认值，不能是空框');
+    assert.match(p2ui.preview, /基准 7 次调用/, '教学档 C=2 有检索应为 7 次');
+    assert.match(p2ui.preview, /2 个阶段/, '预览要说清分阶段写作扇出几次');
+    assert.equal(p2ui.min, '7');
+    for (const label of ['知识点拆解', '分阶段计划', '自测题设计']) {
+      assert.ok(p2ui.stageTitles.includes(label), `教学档缺环节「${label}」，实得：` + p2ui.stageTitles.join('/'));
+    }
+
+    /* 改阶段数，基准调用数必须跟着变——这是"数字真的接到计划上"的唯一证据。 */
+    await js(`(()=>{const i=document.querySelector('#teaching-stages');i.value='4';i.dispatchEvent(new Event('change',{bubbles:true}));return true})()`);
+    await delay(900);
+    const fourStages = await js(`document.querySelector('#research-plan-preview').textContent.replace(/\\s+/g,' ')`);
+    assert.match(fourStages, /基准 9 次调用/, 'C=4 时基准应为 9 次：' + fourStages);
+    await js(`(()=>{const i=document.querySelector('#teaching-stages');i.value='2';i.dispatchEvent(new Event('change',{bubbles:true}));return true})()`);
+    await delay(700);
 
     /* 切到速查档：任务区应消失，出现要点汇总、不再有反证与整合 */
     await js(`document.querySelector('[data-research-profile="p0-query"]').click();true`);

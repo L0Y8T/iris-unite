@@ -10,8 +10,13 @@
 
 const PROFILE_IDS = Object.freeze(['p0-query', 'p1-review', 'p2-teach']);
 
-/* 本期已经能真跑起来的档位。教学档只做到"配置与计划可预览"，运行要等 M4。 */
-const IMPLEMENTED_PROFILES = Object.freeze(['p0-query', 'p1-review']);
+/* 本期已经能真跑起来的档位。
+ *
+ * 教学档（p2-teach）在 v1.2 落地为「学习计划」：先真实检索资料，再拆知识点、算依赖图、
+ * 排阶段、出带答案与判分口径的自测题。原设计（docs §8）里的「分章正文 + 算式校验」
+ * 不在本期范围内——那是另一件事，堆进同一轮只会让两种产物都不完整。
+ * 三个教学环节的 id 保持不变，语义按学习计划重写，计划编译器不用改。 */
+const IMPLEMENTED_PROFILES = Object.freeze(['p0-query', 'p1-review', 'p2-teach']);
 
 const isImplemented = profile => IMPLEMENTED_PROFILES.includes(profile);
 
@@ -26,6 +31,9 @@ const POLICY = Object.freeze({
   defaultWallClockSec: 900,
   teachingChapters: [2, 4],
   teachingChapterDefault: 2,
+  /* 知识点上限：学习计划的质量主要由「拆得够细」决定，但拆到几十个点就没人照着学了。 */
+  teachingPoints: [3, 30],
+  teachingPointDefault: 12,
   p1Tasks: [1, 4],
   /* 实验族上限：trial 是单次训练/评估运行，round 是「跑一轮 → 看指标 → 调参再跑」的轮次 */
   maxExperimentTrials: 12,
@@ -84,9 +92,9 @@ const STAGE_META = Object.freeze({
   'experiment-run': { label: '训练与评估', type: 'exec', role: null },
   'experiment-analyze': { label: '结果分析', type: 'model', role: 'experimentAnalyze' },
   'experiment-report': { label: '实验记录', type: 'local', role: null },
-  'teaching-outline': { label: '教学大纲', type: 'model', role: 'teachingOutline' },
-  'teaching-sections': { label: '分节生成', type: 'model', role: 'teachingSections' },
-  'teaching-examples': { label: '例题审查', type: 'model', role: 'teachingExamples' },
+  'teaching-outline': { label: '知识点拆解', type: 'model', role: 'teachingOutline' },
+  'teaching-sections': { label: '分阶段计划', type: 'model', role: 'teachingSections' },
+  'teaching-examples': { label: '自测题设计', type: 'model', role: 'teachingExamples' },
   'research-final': { label: '反证与整合', type: 'model', role: 'final' },
   'research-verify': { label: '引用核验', type: 'local', role: null },
   'research-audit': { label: '终审自检', type: 'local', role: null }
@@ -189,6 +197,31 @@ function requiredReserve(config) {
   return 1 + (config.choices?.audit ? 1 : 0);
 }
 
+/**
+ * 教学配置归一。缺省值与上下界都定在这里，运行器与界面只读结果。
+ *
+ * `chapterCount` 这个键名是从原设计（分章正文）沿用下来的，在「学习计划」里它表示
+ * **学习阶段数**。改名要动计划编译器的 fanOut、调用数公式、界面与已有测试，
+ * 而教学档此前从未真正运行过、没有历史配置需要迁移——收益不抵风险，所以保留键名，
+ * 语义在这里写清楚。
+ */
+function normalizeTeaching(config) {
+  const raw = config?.teaching || {};
+  const stages = Number(raw.chapterCount ?? raw.stageCount ?? POLICY.teachingChapterDefault);
+  const [lo, hi] = POLICY.teachingChapters;
+  const points = Number(raw.maxPoints ?? POLICY.teachingPointDefault);
+  const [pLo, pHi] = POLICY.teachingPoints;
+  return {
+    audience: typeof raw.audience === 'string' && raw.audience.trim() ? raw.audience.trim().slice(0, 80) : '有基础的初学者',
+    learningGoal: typeof raw.learningGoal === 'string' && raw.learningGoal.trim() ? raw.learningGoal.trim().slice(0, 200) : '理解概念及适用边界',
+    /* 用户声明「这些我已经会」：先修检查的唯一输入，命中的知识点不进主路径。 */
+    prerequisites: (Array.isArray(raw.prerequisites) ? raw.prerequisites : [])
+      .map(item => (typeof item === 'string' ? item : '')).map(item => item.trim().slice(0, 60)).filter(Boolean).slice(0, 12),
+    stageCount: Math.min(hi, Math.max(lo, Number.isInteger(stages) ? stages : POLICY.teachingChapterDefault)),
+    maxPoints: Math.min(pHi, Math.max(pLo, Number.isInteger(points) ? points : POLICY.teachingPointDefault))
+  };
+}
+
 /** 配置校验：只做结构语义，不碰目录与网络。目录关联由调用方补。 */
 function validateShape(config) {
   if (!config || typeof config !== 'object') throw new Error('科研配置无效');
@@ -222,10 +255,21 @@ function validateShape(config) {
     throw new Error('教学档关闭检索时需要显式允许无外部资料教学（evidence.allowGeneralTeaching=true）');
   }
 
+  let teaching = null;
   if (config.profile === 'p2-teach') {
-    const chapters = Number(config.teaching?.chapterCount ?? POLICY.teachingChapterDefault);
+    const stages = Number(config.teaching?.chapterCount ?? POLICY.teachingChapterDefault);
     const [lo, hi] = POLICY.teachingChapters;
-    if (!Number.isInteger(chapters) || chapters < lo || chapters > hi) throw new Error(`教学章数需在 ${lo}–${hi} 之间`);
+    if (!Number.isInteger(stages) || stages < lo || stages > hi) throw new Error(`学习阶段数需在 ${lo}–${hi} 之间`);
+    const points = Number(config.teaching?.maxPoints ?? POLICY.teachingPointDefault);
+    const [pLo, pHi] = POLICY.teachingPoints;
+    if (!Number.isInteger(points) || points < pLo || points > pHi) throw new Error(`知识点上限需在 ${pLo}–${pHi} 之间`);
+    /* 长度按**原始输入**判：normalizeTeaching 会截断，用截断后的值判等于永远不报错。 */
+    const audience = typeof config.teaching?.audience === 'string' ? config.teaching.audience.trim() : '';
+    const goal = typeof config.teaching?.learningGoal === 'string' ? config.teaching.learningGoal.trim() : '';
+    if (audience.length > 80) throw new Error('学习对象不超过 80 字');
+    if (goal.length > 200) throw new Error('学习目标不超过 200 字');
+    if ((config.teaching?.prerequisites || []).some(item => typeof item === 'string' && item.trim().length > 60)) throw new Error('每条已具备基础不超过 60 字');
+    teaching = normalizeTeaching(config);
   }
 
   const base = baseCalls(config);
@@ -246,7 +290,7 @@ function validateShape(config) {
     baseCalls: base,
     reserve: requiredReserve(config),
     retrievalEnabled,
-    chapters: config.profile === 'p2-teach' ? Number(config.teaching?.chapterCount ?? POLICY.teachingChapterDefault) : 0
+    teaching
   };
 }
 
@@ -301,6 +345,7 @@ function migrateConfig(input, { catalog } = {}) {
       prerequisites: [],
       learningGoal: '理解概念及适用边界',
       chapterCount: POLICY.teachingChapterDefault,
+      maxPoints: POLICY.teachingPointDefault,
       chapterChoices: {},
       numericPolicy: 'builtin-arithmetic-only'
     },
@@ -389,6 +434,7 @@ function defaultsFor(profile, catalog, pickModel) {
       prerequisites: [],
       learningGoal: '理解概念及适用边界',
       chapterCount: POLICY.teachingChapterDefault,
+      maxPoints: POLICY.teachingPointDefault,
       chapterChoices: {},
       numericPolicy: 'builtin-arithmetic-only'
     },
@@ -459,6 +505,7 @@ module.exports = {
   baseCalls,
   experimentsEnabled,
   normalizeExperiments,
+  normalizeTeaching,
   experimentModelCalls,
   requiredReserve,
   validateShape,

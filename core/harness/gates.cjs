@@ -214,12 +214,48 @@ const analyzeGate = defineGate({
   ]
 });
 
-const DEFAULT_GATES = [scopeGate, evidenceGate, finalGate, analyzeGate];
+/** teaching-outline：骨架坏了就不该继续花 C 次调用去写阶段正文。
+ *  检查对象是**机械建图之后**的骨架（core/learning.cjs 的产出），不是模型的原始输出：
+ *  原始输出里允许有悬空先修、允许有环，那些已经被破环与断边处理过了，处理不掉才是问题。 */
+const unassignedPoints = payload => {
+  const assigned = new Set();
+  for (const stage of arr(payload.stages)) for (const id of arr(stage.pointIds)) assigned.add(id);
+  return arr(payload.points)
+    .filter(point => point && point.assumed !== true && !assigned.has(point.id))
+    .map(point => str(point.name) || str(point.id) || '(无名知识点)');
+};
+
+const teachingGate = defineGate({
+  stage: 'teaching-outline',
+  checks: [
+    {
+      id: 'points',
+      message: '知识点拆解必须给出非空知识点数组',
+      detail: payload => `points 实际是 ${describe(payload.points)}`,
+      test: payload => arr(payload.points).length > 0
+    },
+    {
+      id: 'stages',
+      message: '知识点必须能排出至少一个学习阶段',
+      detail: payload => `stages 实际是 ${describe(payload.stages)}`,
+      test: payload => arr(payload.stages).length > 0
+    },
+    {
+      id: 'assigned',
+      message: '每个可学知识点都必须排进某个学习阶段',
+      detail: payload => `没排进任何阶段：${unassignedPoints(payload).join('、')}`,
+      test: payload => unassignedPoints(payload).length === 0
+    }
+  ]
+});
+
+const DEFAULT_GATES = [scopeGate, evidenceGate, finalGate, analyzeGate, teachingGate];
 
 module.exports = {
   GATE_FAILED,
   PLACEHOLDERS,
   defineGate,
   runGates,
-  DEFAULT_GATES
+  DEFAULT_GATES,
+  teachingGate
 };

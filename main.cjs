@@ -395,7 +395,7 @@ function setupIPC() {
       roleLabels: Object.fromEntries(profiles.activeRoles(id).map(role => [role, profiles.STAGE_META[profiles.ROLE_STAGE[role]]?.label || role]))
     })),
     tiers: profiles.TIER_IDS,
-    policy: { maxCallsCap: profiles.POLICY.maxCallsCap, wallClock: [profiles.POLICY.minWallClockSec, profiles.POLICY.maxWallClockSec], chapters: profiles.POLICY.teachingChapters }
+    policy: { maxCallsCap: profiles.POLICY.maxCallsCap, wallClock: [profiles.POLICY.minWallClockSec, profiles.POLICY.maxWallClockSec], chapters: profiles.POLICY.teachingChapters, teachingPoints: profiles.POLICY.teachingPoints, teachingPointDefault: profiles.POLICY.teachingPointDefault }
   }));
   /* 计划预览：编译配置态计划 + 就绪检查 + 生效态覆盖，全部是纯计算，不发请求。 */
   register('duet:plan', input => {
@@ -424,6 +424,8 @@ function setupIPC() {
         reserve: compiled.reserve,
         wallClockSec: compiled.wallClockSec,
         stages: compiled.nodes.map(n => ({ id: n.id, label: n.label, type: n.type, required: n.required, fanOut: n.fanOut, condition: n.condition })),
+        /* 学习计划的两个规模参数也进预览：阶段数直接决定 teaching-sections 扇出几次。 */
+        teaching: compiled.stable.teaching,
         disabledCapabilities: compiled.disabledCapabilities,
         effective,
         readiness,

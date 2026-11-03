@@ -30,6 +30,9 @@ const { historyFor } = require('./harness/compaction.cjs');
 /* 1.1 阶段准入：环节一产出就挂起来，推进到下一环节之前先过机械检查。
    默认关闭（config.harness.gates === true 才启用），不改动既有的事后门禁。 */
 const { DEFAULT_GATES, runGates, GATE_FAILED } = require('./harness/gates.cjs');
+/* 1.2 学习模式：知识点 → 依赖图 → 分层 → 阶段 → 自测。
+   图和排序全在这个纯模块里算，模型只负责"有哪些知识点、谁依赖谁"。 */
+const learning = require('./learning.cjs');
 
 /* 环节定义。kind=model 的环节调用模型并消耗预算；kind=local 的环节只在本地计算。
    order 是执行顺序，界面按这个顺序画架构图。 */
@@ -42,6 +45,11 @@ const STAGES = [
   { id: 'research-explore', label: '并行研究', kind: 'model', phase: '推演', detail: '各任务独立推演，只能引用资料库已有证据' },
   { id: 'research-screen', label: '候选筛选', kind: 'model', phase: '推演', detail: '按证据、创新性、可行性与反例筛选，决定是否深化' },
   { id: 'research-refine', label: '定向深化', kind: 'model', phase: '推演', detail: '被选中的任务在预算内做一轮针对性修订' },
+  /* 教学档（学习计划）的三个环节。id 沿用原设计，语义按「学习计划」重写：
+     原设计的「分章正文 + 例题算式校验」不在本期范围，见 docs/learning-mode.md。 */
+  { id: 'teaching-outline', label: '知识点拆解', kind: 'model', phase: '教学', detail: '把主题拆成最小知识点，标出先修关系与证据来源' },
+  { id: 'teaching-sections', label: '分阶段计划', kind: 'model', phase: '教学', detail: '依赖图分层并合成学习阶段：目标、里程碑、自问清单与常见误区' },
+  { id: 'teaching-examples', label: '自测题设计', kind: 'model', phase: '教学', detail: '为每个知识点出可自评的题，附参考答案与判分口径' },
   { id: 'experiment-design', label: '实验设计', kind: 'model', phase: '实验', detail: '把候选方向变成可证伪假设、指标、搜索空间与停止条件' },
   { id: 'experiment-build', label: '实验程序', kind: 'local', phase: '实验', detail: '把实验规格编译成受控模板的调用参数，越界方案当场拦下' },
   { id: 'experiment-run', label: '训练与评估', kind: 'exec', phase: '实验', detail: '按 trial 真跑训练与评估，每条运行都留可溯源的运行记录' },
@@ -202,12 +210,12 @@ function upgradeLegacy(value) {
 
 const RETRIEVAL_SOURCES = ['openalex', 'crossref', 'arxiv', 'pubmed'];
 
-const ROLE_LABEL = { scope: '研究界定', evidence: '证据提取', summarize: '要点汇总', plan: '问题分解', screen: '候选筛选', experimentDesign: '实验设计', experimentAnalyze: '结果分析', final: '反证与整合', audit: '终审复核', teachingOutline: '教学大纲', teachingSections: '分节生成', teachingExamples: '例题审查' };
+const ROLE_LABEL = { scope: '研究界定', evidence: '证据提取', summarize: '要点汇总', plan: '问题分解', screen: '候选筛选', experimentDesign: '实验设计', experimentAnalyze: '结果分析', final: '反证与整合', audit: '终审复核', teachingOutline: '知识点拆解', teachingSections: '分阶段计划', teachingExamples: '自测题设计' };
 
-/** 本期还没实现的档位：到 M4 才补教学档的分段生成与算式校验。 */
+/** 没实现的档位到不了这里；这一层保留是为了将来新增档位时能明确拒绝，而不是跑到一半才崩。 */
 function assertRunnable(config) {
   if (!profiles.isImplemented(config.profile)) {
-    throw new Error('教学档（P2）本期尚未实现：分段生成、例题与算式校验在后续里程碑补齐。请先选速查或综述档。');
+    throw new Error(`档位 ${config.profile} 本期尚未实现。请先选速查、综述或教学档。`);
   }
 }
 
@@ -438,6 +446,110 @@ function knowledgeBlock(knowledge, { limit = 36, abstractChars = 500 } = {}) {
 }
 
 const ANTI_FABRICATION = '禁止编造文献、DOI、arXiv 号、检索结果、实验或数据。任何文献引用只能使用「资料库」里出现过的键（如 S3）；实验数字只能来自「已完成的实验运行」清单里列出的指标，并按 [E1] 形式标注来源；这两份材料里没有的内容只能明确写成待核验假设或证据缺口，不得伪造出处。证据不足时应当说明不足，而不是补一个像真的引用。';
+
+/* ── 学习模式（教学档）的三段提示词 ────────────────────────────────────────
+ *
+ * 共同的约束：只做自己那一段，不替下一段写。
+ *   outline 只管「有哪些知识点、谁依赖谁」，不许写学习步骤——步骤是程序按依赖图排的；
+ *   sections 只管「这一阶段怎么学」，不许增删知识点——增删就等于改掉已验证的骨架；
+ *   examples 只管「怎么判断学会了」，不许改知识点口径。
+ * 这样每次调用失败只毁掉自己那一段，骨架与其它段都还在。
+ */
+const TEACHING_OUTLINE_PROMPT = maxPoints => `你是学习计划的知识点拆解者。给定学习主题、学习对象、学习目标、用户已有的基础，以及本轮真实检索到的资料库，请把这个主题拆成最小可学单位的知识点，并给出它们之间的先修关系。
+
+要求：
+1) 知识点是「可以单独学会、也能单独考察」的最小单位，不是章节标题。一件互相独立的事不要塞进同一个知识点。
+2) 最多 ${maxPoints} 个。宁少勿滥：拆得虚，后面的阶段和自测题都会跟着虚。
+3) requires 只能引用本次返回里其它知识点的 id，不许引用不存在的 id，不许把自己列为先修，整体必须能排出先后（无环）。
+4) difficulty 只能是 入门、基础、进阶、前沿 之一。
+5) evidenceKeys 只能写资料库里真实出现过的键（如 S3）。资料库支撑不到的知识点，把 evidenceKeys 留成空数组，不要编键。
+6) why 用一句话写它在整条路径里的作用：学会它能解锁什么。
+7) id 用小写英文与连字符，形如 ddpm-forward。
+8) 用户声明已经具备的基础，不要当作新知识点重复拆；但如果它是别的知识点的先修，可以保留并说明。
+
+只输出严格 JSON：topic（一句话主题）、points（数组，每项 id、name、summary、difficulty、requires、evidenceKeys、why）。
+只输出一个 JSON 对象，不要额外文字，括号与逗号必须配对。`;
+
+const TEACHING_STAGE_PROMPT = `你是学习计划的分阶段设计者。你只负责一个学习阶段，写的是「照着这份计划怎么学这一步」，不是教程章节。
+
+这一阶段包含哪些知识点已经由程序按依赖关系排好，你不得增删知识点，也不得改变它们的先后顺序。
+
+要写的内容：
+1) title：阶段名字，8 字以内，说清这一步在做什么（如「先建立概率直觉」）。
+2) objective：学完这一阶段能做到什么。用可检验的动词开头（能推导 / 能判断 / 能实现 / 能指出反例），不要写「理解 XX 的重要性」这类无法验证的话。
+3) keyQuestions：3–6 条读者应该能自己回答的问题。问句要落到具体知识点上，不要空泛。
+4) milestones：2–4 个可验证的里程碑（能写出什么、跑通什么、能复述什么）。
+5) pitfalls：2–4 个这一阶段最常见的误区，写清错在哪、为什么常见。
+6) materials：每条写「用什么资料、看哪一部分、为什么看它」；能对应资料库键的写在后面（如 [S3]）。
+
+引用只能使用资料库里的键；没有资料支撑的说法要标明是通用知识而不是本轮资料。不要写公式推导的全过程，也不要贴整段代码。
+只输出严格 JSON：title、objective、keyQuestions、milestones、pitfalls、materials。`;
+
+const TEACHING_SELFTEST_PROMPT = `你是学习计划的自测题设计者。为每个知识点出一道读者能自我判定的题。
+
+要求：
+1) 每个知识点一道题。pointId 必须原样照抄给定清单里的 id，不许改写或自造。
+2) question 要真能检验是否学会：优先「写出来 / 算出来 / 指出反例 / 解释为什么成立」。避免「是否理解」这类无法判定的问法。
+3) answer 是参考答案的要点（不是完整作文），写清必须命中哪几条才算对。
+4) check 是判分口径：读者自己怎么判断做对了没有，写成一条可执行的标准。
+5) difficulty 与所对应知识点的难度一致（入门/基础/进阶/前沿）。
+6) 不要用资料库里没有的文献出题；不要出需要不可得数据的计算题。
+
+只输出严格 JSON：questions（数组，每项 pointId、question、answer、check、difficulty）。`;
+
+/** 交给收口环节的骨架：只带排程需要的东西，不带整段原始模型输出。 */
+function packTeachingKit(kit) {
+  return {
+    topic: kit.topic,
+    points: kit.points.map(point => ({
+      id: point.id, name: point.name, summary: point.summary,
+      difficulty: point.levelLabel, requires: point.requires,
+      evidenceKeys: point.evidenceKeys, why: point.why, assumed: point.assumed === true
+    })),
+    layers: kit.layers,
+    stages: kit.stages.map(item => ({ id: item.id, index: item.index, points: item.pointIds, names: item.names, section: item.authored || null })),
+    questions: kit.questions,
+    known: kit.known,
+    knownUnmatched: kit.knownUnmatched,
+    deviations: kit.deviations
+  };
+}
+
+/**
+ * 学习计划的收口提示词。
+ *
+ * 与综述档的收口差别很大：那边要"反证与整合出一篇答案"，这边要"把骨架讲成一份能照做的计划"。
+ * 共用一份提示词会让模型写出一篇讲稿——有观点、有论证，但没有阶段、没有自测、没有先修顺序。
+ */
+function buildTeachingFinalPrompt({ kit, teaching, validation }) {
+  const stageList = kit.stages.map(item => `${item.index}. ${item.authored?.title || item.title}：${item.names.join('、')}`).join('\n');
+  const missing = validation.coverage.missing.map(point => point.name);
+  return `你是学习计划的整合者。要交付的是一份可以直接照着执行的「学习计划」，不是教程，也不是文献综述。
+读者看完应当能回答四件事：先学什么、后学什么、每一步学完要能做到什么、怎么判断自己已经学会。
+
+骨架已经由程序按依赖关系排好，这里是它现在的样子（不得增删知识点、不得改阶段顺序、不得改阶段划分）：
+${stageList}
+知识点共 ${kit.points.length} 个（其中 ${kit.known.length} 个按「已有基础」不进主路径），依赖层 ${kit.layers.length} 层。
+
+正文结构固定如下，按顺序写，不要增删章节：
+一、开篇三行：把这个主题切成几个知识点、排成几个阶段，最快形成完整认识的学习顺序是什么。
+二、目标与受众：这份计划给谁看、要达成什么、最终要求读者能做到什么。
+三、已有基础：用户声明已经具备的知识，以及哪些知识点因此从主路径上拿掉了；没有就写「无」。
+四、知识点地图：按依赖层逐层列出（第几层、包含哪些知识点、这一层解决了什么）。只能是给定骨架里的知识点。
+五、学习阶段：每个阶段一节，逐项写 本阶段知识点 / 学完能做到 / 自问清单 / 里程碑 / 常见误区 / 材料。给定阶段的内容要保留原有的具体性，不要压缩成空话。
+六、自测题：按知识点给出题目、参考答案要点、判分口径。给定题目必须原样收录（可以加编号与分组），不得改写或合并；${missing.length ? `下列知识点还没有题，按同样口径补上：${missing.join('、')}` : '每个知识点都要有题'}。
+七、证据与出处：本轮资料库的哪些记录支撑了哪些知识点，用 [S3] 形式标注；资料支撑不到的，明确写「通用知识，非本轮资料」。
+八、已知缺口：这份计划的薄弱之处——哪些知识点拆得粗、哪些没有资料支撑、哪些依赖读者尚未声明的先修。
+
+硬约束：
+1) 文献引用只能写成资料库键，形如 [S3] 或 [S3,S7]；不得写作者-年份，不得自造 DOI 或 arXiv 号。
+2) 不得增删知识点、不得改阶段顺序。
+3) 不要写成教程正文：不要通篇公式推导、不要贴完整代码、不要整章讲解。这份产出的作用是排程与自检，不是替代学习材料。
+4) 不要给学习时长、周数或每日投入。用户没有要求时间预算，编出来的时间是假精度。
+5) 资料库里没有支撑的说法要标明是通用知识，不要补一个像真的出处。
+学习对象：${teaching.audience}。学习目标：${teaching.learningGoal}。
+只输出完整的学习计划正文，不附协作对话或内部过程。`;
+}
 
 async function runResearch({ conversation, config, run, signal, call, onChange = () => {}, onFinal = () => {}, retrieve, knowledge, citation, monitor, experimentRuns = [], experimentReference = null, verifyExperiments = null, experimentTools = null, workspace = null, confirm = null, summarize = null }) {
   assertRunnable(config);
@@ -793,11 +905,14 @@ async function runResearch({ conversation, config, run, signal, call, onChange =
       return parts;
     }
 
-    /* 工作区已有产物，但这几样不是产物：资料库索引、实验运行清单、上一轮成果。 */
+    /* 工作区已有产物，但这几样不是产物：资料库索引、实验运行清单、上一轮成果、学习骨架。 */
     if (materials.experiments) parts.push({ title: '已完成的实验运行', text: String(materials.experiments) });
     if (materials.experimentSummary) parts.push({ title: '本轮实验小结', text: JSON.stringify(materials.experimentSummary) });
     if (materials.library) parts.push({ title: '资料库索引', text: String(materials.library) });
     if (materials.priorResults) parts.push({ title: '上一轮已完成的研究', text: JSON.stringify(materials.priorResults) });
+    /* 学习骨架（知识点、层、阶段、自测题）不是模型产物，它由程序算出，
+       所以不会出现在工作区的 artifact 列表里，必须单独放进来。 */
+    if (materials.teaching) parts.push({ title: '学习骨架（程序排定，不得改动）', text: JSON.stringify(materials.teaching) });
     return parts;
   }
 
@@ -935,6 +1050,137 @@ async function runResearch({ conversation, config, run, signal, call, onChange =
     run.experimentRuns = runs.map(r => ({ runId: r.runId, label: r.label, status: r.status, params: r.params }));
     emit({ kind: 'experiment-report', summary, rounds: rounds.length, rejected: built.rejected });
     return { skipped: false, design, built, runs, rounds, summary, metric: built.metric, direction: built.direction };
+  }
+
+  /** 一条可公开的过程说明。教学族里凡是"模型没给够但本轮继续"的情况都往这里记。 */
+  const notice = (stageId, label, text) => emit({
+    kind: 'artifact',
+    artifact: { id: randomUUID(), stage: stageId, stageLabel: label, kind: 'notice', status: 'done', text, startedAt: Date.now(), finishedAt: Date.now() }
+  });
+
+  /**
+   * 教学族（学习计划）：知识点拆解 → 机械建图与排阶段 → 分阶段写作 → 自测题。
+   *
+   * 为什么不一次性让模型写完整份计划：
+   *   一次写完，模型会把「学什么」和「先学什么」糊进同一段正文，改不动也验不了，
+   *   而且同一份知识点跑两次会得到两个学习顺序——顺序会变的计划不是计划。
+   *   拆开之后：骨架由 core/learning.cjs 机械算出（排序确定、破环留痕、先修可机械判定），
+   *   正文只负责把骨架讲清楚。骨架错了能指出来，正文写差了只影响一段。
+   *
+   * 预算：拆解 1 次 + 每阶段 1 次 + 自测 1 次 = C + 2，加上界定与证据正好是 §9.1 的 C+5。
+   */
+  async function runTeachingFamily({ scope, evidence }) {
+    const teaching = profiles.normalizeTeaching(config);
+
+    /* ── 1. 知识点拆解 ─────────────────────────────────────────────────── */
+    stage('teaching-outline', 1);
+    const outlineText = await request(
+      config.choices.teachingOutline,
+      TEACHING_OUTLINE_PROMPT(teaching.maxPoints),
+      {
+        topic: question,
+        objective: scope.objective,
+        questions: scope.questions,
+        audience: teaching.audience,
+        learningGoal: teaching.learningGoal,
+        alreadyKnown: teaching.prerequisites,
+        evidence: (evidence?.claims || []).slice(0, 40),
+        evidenceGaps: evidence?.gaps || [],
+        library: knowledgeBlock(knowledge, { limit: 30, abstractChars: 500 })
+      },
+      { schema: learning.POINTS_SCHEMA }
+    );
+    const outlineParsed = tryParseJSON(outlineText);
+    /* 知识点是整份计划的骨架，这里不做兜底：没有骨架的"学习计划"只剩一段泛泛而谈的建议，
+       而用户会以为计划已经生成好了。明确失败比一个看起来像计划的空壳更有用。 */
+    if (!outlineParsed.ok) {
+      throw new Error(`知识点拆解没有返回可解析的结构（${outlineParsed.error}），已停止本轮；可换一个更强的模型重试`);
+    }
+    if (outlineParsed.repaired) notice('teaching-outline', '知识点拆解', '知识点拆解输出的 JSON 括号不配对，已自动修复后继续。');
+
+    const kit = learning.buildKit(outlineParsed.value, {
+      evidenceKeys: recordKeys(),
+      known: teaching.prerequisites,
+      stageCount: teaching.stageCount,
+      limit: teaching.maxPoints
+    });
+    if (!kit.points.length) throw new Error('知识点拆解没有产出任何可用知识点（可能是主题太宽泛），已停止本轮');
+    if (kit.points.length < learning.MIN_POINTS) {
+      kit.deviations.push({ code: 'few-points', message: `只拆出 ${kit.points.length} 个知识点，路径可能过粗；可以把主题再具体一点重跑` });
+    }
+    Object.assign(run, { learning: { topic: kit.topic || question, points: kit.points, known: kit.known, layers: kit.layers, stages: kit.stages.map(s => ({ id: s.id, index: s.index, title: s.title, pointIds: s.pointIds, names: s.names })), deviations: kit.deviations, stats: kit.stats } });
+    emit({ kind: 'learning-outline', outline: learning.summarizeKit(kit), layers: kit.layers, known: kit.known, deviations: kit.deviations });
+    /* 骨架先去门禁：结构性坏掉的计划不该继续花 C 次调用去写正文。 */
+    noteGateOutput('teaching-outline', { points: kit.points, stages: kit.stages });
+
+    if (!kit.stages.length) {
+      throw new Error('知识点无法排出学习阶段（少于一个可学单元），已停止本轮');
+    }
+
+    /* ── 2. 分阶段写作：每阶段一次调用，并行。 ────────────────────────────
+       阶段集合是程序排的，模型只能往里填内容；任何阶段失败都会中止本轮
+       （和并行研究一致：一段缺了就拼不出完整计划，不如早停把预算省下来）。 */
+    stage('teaching-sections', kit.stages.length);
+    const byPointId = new Map(kit.points.map(point => [point.id, point]));
+    await parallel(kit.stages.map(item => ({ id: item.id, title: item.title })), async stageInfo => {
+      const target = kit.stages.find(item => item.id === stageInfo.id);
+      const members = target.pointIds.map(id => byPointId.get(id)).filter(Boolean);
+      /* 先修知识点的摘要放在材料里：不写的话模型会重新解释一遍这些点，和新阶段的内容打架。 */
+      const priorIds = [...new Set(members.flatMap(point => point.requires))].filter(id => !target.pointIds.includes(id));
+      const text = await request(
+        config.choices.teachingSections,
+        TEACHING_STAGE_PROMPT,
+        {
+          topic: kit.topic || question,
+          objective: scope.objective,
+          audience: teaching.audience,
+          learningGoal: teaching.learningGoal,
+          stage: { id: target.id, index: target.index, total: kit.stages.length, levels: [target.levelFrom, target.levelTo] },
+          points: members.map(point => ({ id: point.id, name: point.name, summary: point.summary, difficulty: point.levelLabel, requires: point.requires, evidenceKeys: point.evidenceKeys, why: point.why })),
+          prerequisitePoints: priorIds.map(id => byPointId.get(id)).filter(Boolean).map(point => ({ id: point.id, name: point.name, summary: point.summary })),
+          alreadyKnown: teaching.prerequisites,
+          evidenceClaims: (evidence?.claims || []).slice(0, 24),
+          library: knowledgeBlock(knowledge, { limit: 20, abstractChars: 300 })
+        },
+        { task: stageInfo, schema: learning.STAGE_SCHEMA }
+      );
+      const parsed = tryParseJSON(text);
+      /* 阶段正文写歪了不该让整轮失败：结构已经排好，缺的只是这一段的可读说明。
+         原文兜底进 objective，自检里会标出来。 */
+      const section = parsed.ok
+        ? learning.attachSection(kit, target.id, parsed.value)
+        : learning.attachSection(kit, target.id, { title: target.title, objective: asText(text, 800), keyQuestions: [], milestones: [], pitfalls: [], materials: [] });
+      if (!parsed.ok) notice('teaching-sections', '分阶段计划', `${target.title} 的输出不是合法 JSON（${parsed.error}），已按原文保留本阶段说明。`);
+      emit({ kind: 'teaching-stage', stageId: target.id, section });
+      return section;
+    });
+
+    /* ── 3. 自测题：一次调用给全部知识点出题，再机械校验覆盖面。 ────────── */
+    stage('teaching-examples', 1);
+    const selftestText = await request(
+      config.choices.teachingExamples,
+      TEACHING_SELFTEST_PROMPT,
+      {
+        topic: kit.topic || question,
+        learningGoal: teaching.learningGoal,
+        audience: teaching.audience,
+        points: kit.points.filter(point => !point.assumed).map(point => ({ id: point.id, name: point.name, summary: point.summary, difficulty: point.levelLabel, stage: kit.stages.find(item => item.pointIds.includes(point.id))?.id || null })),
+        library: knowledgeBlock(knowledge, { limit: 16, abstractChars: 200 })
+      },
+      { schema: learning.SELFTEST_SCHEMA }
+    );
+    const selftestParsed = tryParseJSON(selftestText);
+    const normalized = learning.normalizeQuestions(selftestParsed.ok ? selftestParsed.value : [], { pointIds: kit.points.map(point => point.id) });
+    kit.questions = normalized.questions;
+    if (!selftestParsed.ok) notice('teaching-examples', '自测题设计', `自测题输出的不是合法 JSON（${selftestParsed.error}），本轮没有可用自测题，正文会按知识点现出题。`);
+    else if (normalized.dropped.length) notice('teaching-examples', '自测题设计', `${normalized.dropped.length} 道自测题指不回知识点或重复，已丢弃。`);
+
+    const validation = learning.validateKit(kit, { stageCount: teaching.stageCount });
+    Object.assign(run.learning, { questions: kit.questions, coverage: validation.coverage, problems: validation.problems, warnings: validation.warnings });
+    emit({ kind: 'teaching-selftest', questions: kit.questions.length, coverage: validation.coverage, warnings: validation.warnings, problems: validation.problems });
+    if (!validation.ok) notice('teaching-examples', '自测题设计', `知识点骨架存在 ${validation.problems.length} 处结构问题：${validation.problems.map(item => item.message).join('；')}`);
+
+    return { kit, validation, teaching };
   }
 
   /* 沿用模式：只跑实验与整合，前序结论直接取自上一轮。
@@ -1229,11 +1475,23 @@ async function runResearch({ conversation, config, run, signal, call, onChange =
       run.experiments = experimentResult;
     }
 
+    /* ── 7.7 教学族（学习计划）：拆解 → 建图排阶段 → 分阶段写作 → 自测题 ──
+       与实验族相反，这里不做兜底：知识点骨架拿不到就停。
+       一份没有骨架的"学习计划"读起来像模像样，实际什么也没排——那种产出比失败更费时间。 */
+    let teachingResult = null;
+    if (hasNode('teaching-outline')) {
+      teachingResult = await runTeachingFamily({ scope, evidence });
+    }
+
     /* ── 8. 反证与整合：综述与教学档的收口环节 ──────────────────────────── */
     if (hasNode('research-final')) {
     stage('research-final', 1);
     emit({ kind: 'writer', writer: config.choices.final.provider, choice: config.choices.final });
-    const finalPrompt = `你是最终反证与整合者。阅读研究界定、证据、全部研究结果、候选筛选与深化成果，严厉检验机制、创新性、可行性与证据缺口，整合成唯一可直接交付的科研答案。
+    /* 教学档的收口是「把骨架讲成一份能照做的计划」，不是「写成一篇论文」。
+       共用一份提示词会让模型写出一篇有观点、有论证、但没有阶段与自测的讲稿。 */
+    const finalPrompt = teachingResult
+      ? buildTeachingFinalPrompt(teachingResult)
+      : `你是最终反证与整合者。阅读研究界定、证据、全部研究结果、候选筛选与深化成果，严厉检验机制、创新性、可行性与证据缺口，整合成唯一可直接交付的科研答案。
 要求：
 1) 正文里每一处引用都只能写成资料库键，形如 [S3] 或 [S3,S7]，不得写作者-年份、不得自造 DOI。
 2) 明确区分「已有证据支持的结论」「本文推演但未验证的假设」「需要实验回答的问题」。
@@ -1242,7 +1500,9 @@ async function runResearch({ conversation, config, run, signal, call, onChange =
 5) 引用实验运行时写成 [E1] 或 [E1,E2]（编号来自「已完成的实验运行」清单），正文里的实验数字必须与该行列出的指标一致（写 97.3% 或 0.973 都算一致）；清单为空时不要写任何实验数字，也不要声称跑过实验。
 6) 如果给了「上一轮已完成的研究」材料，那是同一个研究问题已经做过的界定、证据与推演，直接在此基础上写，不要重复它已经说过的内容。
 只输出完整最终答案，不附协作对话或内部过程。`;
-    const finalMaterials = { scope, evidence, plan, tasks: config.tasks, explorations, selection: run.selection, refinements, library, priorResults: carry?.prior || null, experiments: referenceOf(), experimentSummary: experimentResult && !experimentResult.skipped ? { metric: experimentResult.metric, direction: experimentResult.direction, best: experimentResult.summary?.best || null, rounds: experimentResult.rounds?.length || 0, failed: experimentResult.summary?.failed || 0 } : null };
+    const finalMaterials = teachingResult
+      ? { scope, evidence, teaching: packTeachingKit(teachingResult.kit), library }
+      : { scope, evidence, plan, tasks: config.tasks, explorations, selection: run.selection, refinements, library, priorResults: carry?.prior || null, experiments: referenceOf(), experimentSummary: experimentResult && !experimentResult.skipped ? { metric: experimentResult.metric, direction: experimentResult.direction, best: experimentResult.summary?.best || null, rounds: experimentResult.rounds?.length || 0, failed: experimentResult.summary?.failed || 0 } : null };
     /* 1.0 harness 路径：材料走装配、模型可调工具按需读取。
        注入工作区才启用；没有工作区时走 0.6 的老路径，行为完全一致。 */
     if (workspace && config?.harness?.tools !== false) {
@@ -1334,6 +1594,22 @@ async function runResearch({ conversation, config, run, signal, call, onChange =
     if (evidence?.parseFailed) push('证据提取输出可解析', false, '模型没有返回合法 JSON，已按原文保留');
     if (run.researchPlan?.parseFailed) push('任务分解输出可解析', false, '模型没有返回合法 JSON，已按用户配置兜底');
     if (run.selection?.unsupported?.length) push('无缺乏证据的结论', false, `${run.selection.unsupported.length} 处待补证据`);
+    /* 教学族：骨架是否完整、自测是否覆盖、依赖有没有绕回自己，都是可以机械判定的。
+       不把它们写进自检，用户就只能凭正文的观感判断这份计划能不能照着学。 */
+    if (teachingResult) {
+      const { kit, validation } = teachingResult;
+      const cycles = kit.deviations.filter(item => item.code === 'cycle-broken');
+      push('知识点已排进学习阶段', validation.ok, validation.problems.length
+        ? validation.problems.map(item => item.message).join('；')
+        : `${kit.stages.length} 个阶段，${kit.stats.active} 个知识点全部就位`);
+      push('先修关系可排序', cycles.length === 0, cycles.length ? cycles.map(item => item.message).join('；') : `${kit.layers.length} 层，无环`);
+      const coverage = validation.coverage;
+      push('自测题覆盖知识点', coverage.missing.length === 0, coverage.missing.length
+        ? `${coverage.covered}/${coverage.total} 个知识点有题，缺：${coverage.missing.map(point => point.name).join('、')}`
+        : `${coverage.covered}/${coverage.total} 个知识点各有一题`);
+      if (kit.known.length) push('已有基础已排除', true, `按用户声明排除 ${kit.known.length} 个：${kit.known.map(item => item.name).join('、')}`);
+      if (kit.deviations.length) push('计划自动修正已记录', true, `${kit.deviations.length} 处，见计划末尾`);
+    }
     /* 实验族：跑了就要如实交代成功几次、有没有失败、有没有被拦下的方案。 */
     if (experimentResult) {
       if (experimentResult.skipped) {
@@ -1383,7 +1659,20 @@ async function runResearch({ conversation, config, run, signal, call, onChange =
     const writerRole = configPlan.outputRole || 'final';
     Object.assign(run, { status: 'done', stage: 'completed', stageLabel: '已完成', finishedAt: Date.now(), finalText, callsUsed: ledger.spent() });
     emit({ kind: 'finished', status: 'done', finishedAt: run.finishedAt, verdict: audit.verdict });
-    return { writer: (config.choices[writerRole] || config.choices.final)?.provider ?? null, finalText, integrity, audit, experiments: experimentIntegrity, experimentFamily: experimentResult, planVersion: configPlan.planVersion };
+    return {
+      writer: (config.choices[writerRole] || config.choices.final)?.provider ?? null,
+      finalText, integrity, audit,
+      experiments: experimentIntegrity,
+      experimentFamily: experimentResult,
+      /* 学习计划：骨架（可照做）、校验结论（能不能照做）与确定性正文都交出去。
+         renderPlan 的正文是结构核对用的，模型写的那份才是给用户读的。 */
+      learning: teachingResult ? {
+        kit: packTeachingKit(teachingResult.kit),
+        validation: teachingResult.validation,
+        planText: learning.renderPlan(teachingResult.kit, { title: teachingResult.kit.topic || question })
+      } : null,
+      planVersion: configPlan.planVersion
+    };
   } catch (e) {
     sibling.abort(e);
     Object.assign(run, {
@@ -1401,6 +1690,7 @@ module.exports = {
   STAGES,
   STAGE_BY_ID,
   RETRIEVAL_SOURCES,
+  ROLE_LABEL,
   defaults,
   validateConfig,
   assertRunnable,
@@ -1410,6 +1700,7 @@ module.exports = {
   stagesFor,
   minCallsFor,
   runResearch,
+  LEARNING_SCHEMAS: { points: learning.POINTS_SCHEMA, stage: learning.STAGE_SCHEMA, selftest: learning.SELFTEST_SCHEMA },
   SCOPE_SCHEMA,
   EVIDENCE_SCHEMA,
   PLAN_SCHEMA,

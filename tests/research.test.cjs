@@ -412,11 +412,12 @@ test('速查档按计划跑：只调用 界定/证据/汇总 三个模型环节�
   assert.equal(audit.verdict, 'passed');
 });
 
-test('教学档（P2）在发请求前就被明确拒绝，不是跑到一半才失败', () => {
+test('三档都已实现：教学档不再是"能配不能跑"，但未知档位仍会在发请求前被拒绝', () => {
   const p2 = profiles.defaultsFor('p2-teach', catalog, () => ({ provider: 'deepseek', model: 'deepseek-flash', effort: 'high' }));
   const c = research.validateConfig(p2, catalog);
   assert.equal(c.profile, 'p2-teach', '配置本身合法，界面才能预览');
-  assert.throws(() => research.assertRunnable(c), /尚未实现/);
+  assert.equal(research.assertRunnable(c), undefined, '教学档现在能真跑');
+  assert.throws(() => research.assertRunnable({ ...c, profile: 'p9-future' }), /尚未实现/);
 });
 
 test('调用账本在越过上限前就挡住，而不是先发出请求再报错', async () => {
