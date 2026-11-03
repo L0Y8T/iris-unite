@@ -4,6 +4,10 @@ const path = require('node:path');
 const fs = require('node:fs/promises');
 const assert = require('node:assert/strict');
 const executable = process.env.DUET_VERIFY_EXE || path.resolve(__dirname, '../build/IrisUnite-win32-x64/IrisUnite.exe');
+/* 标题栏版本号写成什么，只能由 package.json 决定。
+   曾经写死 "Iris Unite 0.6"，于是这条断言在版本号升上去之后一直躺在旧值上——
+   而它恰好是本文件里唯一会验「装的是哪一版」的地方。 */
+const pkgVersion = require('../package.json').version;
 const delay = ms => new Promise(r => setTimeout(r, ms));
 const children = new Set();
 async function port() { const s = net.createServer(); await new Promise(r => s.listen(0, '127.0.0.1', r)); const p = s.address().port; await new Promise(r => s.close(r)); return p; }
@@ -34,7 +38,9 @@ async function launch() {
   const initial = await app.js('window.duet.init()');
   assert.equal(initial.settings.mode, undefined);
   assert.ok(await app.js('typeof window.marked?.Marked === "function" && typeof window.DOMPurify?.sanitize === "function" && !!window.DUET_ICONS?.folder'));
-  assert.ok(await app.js('document.querySelector(".title-brand").textContent.includes("Iris Unite 0.6")'));
+  /* 标题栏版本号必须等于 package.json 的版本，而且打包产物自己报的版本也要对上。 */
+  assert.equal(initial.settings.version, pkgVersion, `打包产物报的版本应为 ${pkgVersion}`);
+  assert.ok(await app.js(`document.querySelector(".title-brand").textContent.includes(${JSON.stringify(`Iris Unite ${pkgVersion}`)})`), `标题栏应显示 Iris Unite ${pkgVersion}`);
   assert.ok(await app.js('document.querySelector(".iris-light").complete && document.querySelector(".iris-light").naturalWidth > 0'));
   assert.deepEqual(await app.js('window.__irisErrors'), []);
   const displayName = initial.modelCatalog.gpt.find(m => m.id === initial.settings.defaultModelConfig.gpt.model).name;
