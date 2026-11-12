@@ -19,7 +19,7 @@
     "test:all": "node scripts/run-all-checks.cjs",
     "test:ui": "electron . --smoke-test",
     "test:frontend": "electron . --frontend-test",
-    "package": "electron-packager . IrisUnite --platform=win32 --arch=x64 --out=build --icon=assets/iris.ico --win32metadata.ProductName=\"Iris Unite\" --win32metadata.FileDescription=\"Iris Unite\" --overwrite --ignore=\"^/(build|backups|release|tests|artifacts|.local-data|.test-data|.verification-profile|README.md)\"",
+    "package": "electron-packager . IrisUnite --platform=win32 --arch=x64 --out=build --icon=assets/iris.ico --win32metadata.ProductName=\"Iris Unite\" --win32metadata.FileDescription=\"Iris Unite\" --overwrite --ignore=\"^/(build|backups|release|dist|tests|artifacts|\\.local[^/]*|\\.test-data|\\.verification-profile|README\\.md)($|/)\"",
     "icons": "electron scripts/make-icons.cjs",
     "dist": "electron-builder",
     "dist:win": "electron-builder --win",
