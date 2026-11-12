@@ -275,6 +275,15 @@ function validateConfig(value, catalog) {
   choices.audit = config.choices?.audit ? choice(config.choices.audit, catalog, '终审复核的模型') : null;
   config.choices = choices;
 
+  /* 教学块写回归一后的形态：问诊的槽位摘要在这里算一次，存进配置之后，
+     界面、计划预览、运行器读到的就是同一份，不会各算一遍。
+     `prerequisites` 例外——存的是用户手填的那份，问诊里的「已掌握」只在派生视图里合并，
+     否则用户删掉问诊之后，那些概念会永久粘在先修列表上。 */
+  if (config.profile === 'p2-teach' && shape.teaching) {
+    const declared = Array.isArray(config.teaching?.prerequisites) ? [...config.teaching.prerequisites] : [];
+    config.teaching = { ...(config.teaching || {}), ...shape.teaching, prerequisites: declared, chapterCount: shape.teaching.stageCount };
+  }
+
   return config;
 }
 
@@ -516,6 +525,27 @@ function packTeachingKit(kit) {
 }
 
 /**
+ * 课前问诊的结论拼成提示词末尾的显式约束。
+ *
+ * 为什么单列成正文而不是只丢进 JSON 材料里：材料是数据，模型容易当背景扫过去。
+ * 排计划最怕的正是"看着像考虑了个体差异，实际还是按默认粒度拆"。
+ * 所以问诊结论要以**要求**的形式出现，并写清它应该改变什么。
+ */
+function learnerBrief(learner) {
+  if (!learner) return '';
+  const lines = [];
+  if (learner.level) lines.push(`- 现有水平：${learner.level}。据此决定从哪一层起步，基础部分要不要快速带过。`);
+  if (learner.goal) lines.push(`- 想达到的程度：${learner.goal}。据此决定计划在哪一步收尾，不要比它更浅，也不要凭空加深。`);
+  if (learner.style?.length) lines.push(`- 偏好讲法：${learner.style.join('、')}。每个知识点优先用这个讲法切入。`);
+  if (learner.focus?.length) lines.push(`- 想覆盖的方向：${learner.focus.join('、')}。这些方向必须有对应的知识点，不能被稀释掉。`);
+  if (learner.avoid?.length) lines.push(`- 不想深入的部分：${learner.avoid.join('、')}。只能作为路过的前提提一句，不排进主路径、不来自测题。`);
+  if (learner.known?.length) lines.push(`- 已声明的已掌握概念：${learner.known.join('、')}。命中的知识点不进主路径，但保留一道题确认。`);
+  if (learner.note) lines.push(`- 其它补充：${learner.note}`);
+  if (!lines.length) return '';
+  return `\n\n学习者的课前问诊结论（必须体现在结果里）：\n${lines.join('\n')}`;
+}
+
+/**
  * 学习计划的收口提示词。
  *
  * 与综述档的收口差别很大：那边要"反证与整合出一篇答案"，这边要"把骨架讲成一份能照做的计划"。
@@ -524,6 +554,7 @@ function packTeachingKit(kit) {
 function buildTeachingFinalPrompt({ kit, teaching, validation }) {
   const stageList = kit.stages.map(item => `${item.index}. ${item.authored?.title || item.title}：${item.names.join('、')}`).join('\n');
   const missing = validation.coverage.missing.map(point => point.name);
+  const learner = learning.intakeForPrompt(teaching);
   return `你是学习计划的整合者。要交付的是一份可以直接照着执行的「学习计划」，不是教程，也不是文献综述。
 读者看完应当能回答四件事：先学什么、后学什么、每一步学完要能做到什么、怎么判断自己已经学会。
 
@@ -533,7 +564,7 @@ ${stageList}
 
 正文结构固定如下，按顺序写，不要增删章节：
 一、开篇三行：把这个主题切成几个知识点、排成几个阶段，最快形成完整认识的学习顺序是什么。
-二、目标与受众：这份计划给谁看、要达成什么、最终要求读者能做到什么。
+二、目标与受众：这份计划给谁看、要达成什么、最终要求读者能做到什么。如果下面有课前问诊结论，这里要按它写，不要另编一个受众。
 三、已有基础：用户声明已经具备的知识，以及哪些知识点因此从主路径上拿掉了；没有就写「无」。
 四、知识点地图：按依赖层逐层列出（第几层、包含哪些知识点、这一层解决了什么）。只能是给定骨架里的知识点。
 五、学习阶段：每个阶段一节，逐项写 本阶段知识点 / 学完能做到 / 自问清单 / 里程碑 / 常见误区 / 材料。给定阶段的内容要保留原有的具体性，不要压缩成空话。
@@ -547,8 +578,9 @@ ${stageList}
 3) 不要写成教程正文：不要通篇公式推导、不要贴完整代码、不要整章讲解。这份产出的作用是排程与自检，不是替代学习材料。
 4) 不要给学习时长、周数或每日投入。用户没有要求时间预算，编出来的时间是假精度。
 5) 资料库里没有支撑的说法要标明是通用知识，不要补一个像真的出处。
+6) 问诊里说「不想深入」的方向，不要占主路径位置；说「想覆盖」的方向，必须有对应知识点。
 学习对象：${teaching.audience}。学习目标：${teaching.learningGoal}。
-只输出完整的学习计划正文，不附协作对话或内部过程。`;
+只输出完整的学习计划正文，不附协作对话或内部过程。${learnerBrief(learner)}`;
 }
 
 async function runResearch({ conversation, config, run, signal, call, onChange = () => {}, onFinal = () => {}, retrieve, knowledge, citation, monitor, experimentRuns = [], experimentReference = null, verifyExperiments = null, experimentTools = null, workspace = null, confirm = null, summarize = null }) {
@@ -1071,19 +1103,23 @@ async function runResearch({ conversation, config, run, signal, call, onChange =
    */
   async function runTeachingFamily({ scope, evidence }) {
     const teaching = profiles.normalizeTeaching(config);
+    /* 课前问诊结论：答过就有。它不进骨架计算（那是机械的），
+       但每一处要让模型做判断的地方都要带上——拆多细、从哪起步、跳过什么、问到多深。 */
+    const learner = learning.intakeForPrompt(teaching);
 
     /* ── 1. 知识点拆解 ─────────────────────────────────────────────────── */
     stage('teaching-outline', 1);
     const outlineText = await request(
       config.choices.teachingOutline,
-      TEACHING_OUTLINE_PROMPT(teaching.maxPoints),
+      TEACHING_OUTLINE_PROMPT(teaching.maxPoints) + learnerBrief(learner),
       {
-        topic: question,
+        topic: learner?.topic || question,
         objective: scope.objective,
         questions: scope.questions,
         audience: teaching.audience,
         learningGoal: teaching.learningGoal,
         alreadyKnown: teaching.prerequisites,
+        learner,
         evidence: (evidence?.claims || []).slice(0, 40),
         evidenceGaps: evidence?.gaps || [],
         library: knowledgeBlock(knowledge, { limit: 30, abstractChars: 500 })
@@ -1108,8 +1144,8 @@ async function runResearch({ conversation, config, run, signal, call, onChange =
     if (kit.points.length < learning.MIN_POINTS) {
       kit.deviations.push({ code: 'few-points', message: `只拆出 ${kit.points.length} 个知识点，路径可能过粗；可以把主题再具体一点重跑` });
     }
-    Object.assign(run, { learning: { topic: kit.topic || question, points: kit.points, known: kit.known, layers: kit.layers, stages: kit.stages.map(s => ({ id: s.id, index: s.index, title: s.title, pointIds: s.pointIds, names: s.names })), deviations: kit.deviations, stats: kit.stats } });
-    emit({ kind: 'learning-outline', outline: learning.summarizeKit(kit), layers: kit.layers, known: kit.known, deviations: kit.deviations });
+    Object.assign(run, { learning: { topic: kit.topic || learner?.topic || question, intake: teaching.intake || null, points: kit.points, known: kit.known, layers: kit.layers, stages: kit.stages.map(s => ({ id: s.id, index: s.index, title: s.title, pointIds: s.pointIds, names: s.names })), deviations: kit.deviations, stats: kit.stats } });
+    emit({ kind: 'learning-outline', outline: learning.summarizeKit(kit), layers: kit.layers, known: kit.known, deviations: kit.deviations, learner });
     /* 骨架先去门禁：结构性坏掉的计划不该继续花 C 次调用去写正文。 */
     noteGateOutput('teaching-outline', { points: kit.points, stages: kit.stages });
 
@@ -1129,12 +1165,13 @@ async function runResearch({ conversation, config, run, signal, call, onChange =
       const priorIds = [...new Set(members.flatMap(point => point.requires))].filter(id => !target.pointIds.includes(id));
       const text = await request(
         config.choices.teachingSections,
-        TEACHING_STAGE_PROMPT,
+        TEACHING_STAGE_PROMPT + learnerBrief(learner),
         {
-          topic: kit.topic || question,
+          topic: kit.topic || learner?.topic || question,
           objective: scope.objective,
           audience: teaching.audience,
           learningGoal: teaching.learningGoal,
+          learner,
           stage: { id: target.id, index: target.index, total: kit.stages.length, levels: [target.levelFrom, target.levelTo] },
           points: members.map(point => ({ id: point.id, name: point.name, summary: point.summary, difficulty: point.levelLabel, requires: point.requires, evidenceKeys: point.evidenceKeys, why: point.why })),
           prerequisitePoints: priorIds.map(id => byPointId.get(id)).filter(Boolean).map(point => ({ id: point.id, name: point.name, summary: point.summary })),
@@ -1159,11 +1196,12 @@ async function runResearch({ conversation, config, run, signal, call, onChange =
     stage('teaching-examples', 1);
     const selftestText = await request(
       config.choices.teachingExamples,
-      TEACHING_SELFTEST_PROMPT,
+      TEACHING_SELFTEST_PROMPT + learnerBrief(learner),
       {
-        topic: kit.topic || question,
+        topic: kit.topic || learner?.topic || question,
         learningGoal: teaching.learningGoal,
         audience: teaching.audience,
+        learner,
         points: kit.points.filter(point => !point.assumed).map(point => ({ id: point.id, name: point.name, summary: point.summary, difficulty: point.levelLabel, stage: kit.stages.find(item => item.pointIds.includes(point.id))?.id || null })),
         library: knowledgeBlock(knowledge, { limit: 16, abstractChars: 200 })
       },
@@ -1192,9 +1230,13 @@ async function runResearch({ conversation, config, run, signal, call, onChange =
     let scope = carry?.scope ? JSON.parse(JSON.stringify(carry.scope)) : null;
     if (hasNode('research-scope')) {
     stage('research-scope', 1);
+    /* 教学档的检索式要跟着学习者的水平走：零基础的检索式该去找综述与教程，
+       有基础的该去找原始论文与推导细节。这一句只在有问诊结论时追加。 */
+    const learner = config.profile === 'p2-teach' ? learning.intakeForPrompt(profiles.normalizeTeaching(config)) : null;
     scope = parseJSON(await request(config.choices.scope,
-      '你是科研项目的界定者。把用户的问题拆成可检索的研究问题，写出真正能用于学术数据库的检索式（英文关键词为主，可用 AND / OR / 引号），并给出纳入与排除标准。检索式要覆盖不同侧面，不要写成一句话。输出严格 JSON：objective（研究目标）、questions（3–6 个研究问题）、queries（2–6 条检索式）、inclusion（纳入标准数组）、exclusion（排除标准数组）。',
-      { research: question, preferences: config.tasks.map(t => t.title) },
+      '你是科研项目的界定者。把用户的问题拆成可检索的研究问题，写出真正能用于学术数据库的检索式（英文关键词为主，可用 AND / OR / 引号），并给出纳入与排除标准。检索式要覆盖不同侧面，不要写成一句话。输出严格 JSON：objective（研究目标）、questions（3–6 个研究问题）、queries（2–6 条检索式）、inclusion（纳入标准数组）、exclusion（排除标准数组）。'
+      + (learner ? `${learnerBrief(learner)}\n（这一档是学习计划：检索式要服务于学习者要覆盖的方向，而"不想深入"的方向不必专门去找资料。）` : ''),
+      { research: learner?.topic || question, preferences: config.tasks.map(t => t.title), learner },
       { schema: SCOPE_SCHEMA }), '研究界定未返回有效结构，已停止本轮');
     if (!safeText(scope.objective)) throw new Error('研究界定没有给出研究目标，无法继续（可重新生成）');
     // 字段类型不做严格要求：数组、字符串、单值都接受，超长截断。
@@ -1608,6 +1650,11 @@ async function runResearch({ conversation, config, run, signal, call, onChange =
         ? `${coverage.covered}/${coverage.total} 个知识点有题，缺：${coverage.missing.map(point => point.name).join('、')}`
         : `${coverage.covered}/${coverage.total} 个知识点各有一题`);
       if (kit.known.length) push('已有基础已排除', true, `按用户声明排除 ${kit.known.length} 个：${kit.known.map(item => item.name).join('、')}`);
+      /* 问诊是这份计划"定制"的来源。答过就要在自检里看得到；
+         没答过也要说清楚——那种情况下的计划是按默认受众排的，不是按你的水平。 */
+      const intakeSummary = learning.renderIntakeSummary(teachingResult.teaching?.intake);
+      if (teachingResult.teaching?.intake) push('课前问诊已采纳', true, intakeSummary);
+      else push('课前问诊已采纳', true, '本轮没有课前问诊，计划按默认受众排定；想更贴合自己可先做一次问诊');
       if (kit.deviations.length) push('计划自动修正已记录', true, `${kit.deviations.length} 处，见计划末尾`);
     }
     /* 实验族：跑了就要如实交代成功几次、有没有失败、有没有被拦下的方案。 */

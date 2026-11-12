@@ -355,12 +355,26 @@ function renderResearchForm() {
   const [stageLo, stageHi] = policy.chapters || [2, 4];
   const [pointLo, pointHi] = policy.teachingPoints || [3, 30];
   const teach = c.teaching || {};
+  /* 问诊摘要：主进程已经把答案归并成槽位摘要存在 intake.summary 里，这里只负责显示。 */
+  const intakeLine = (() => {
+    const intake = teach.intake;
+    if (!intake) return '还没做问诊：计划会按默认受众排定，粒度与起点不一定合适。';
+    const parts = [];
+    if (intake.topic) parts.push(`主题：${intake.topic}`);
+    const summary = intake.summary || {};
+    if (summary.level) parts.push(`水平：${summary.level}`);
+    if (summary.goal) parts.push(`目标：${summary.goal}`);
+    if (Array.isArray(summary.focus) && summary.focus.length) parts.push(`想覆盖：${summary.focus.slice(0, 3).join('、')}`);
+    if (Array.isArray(summary.known) && summary.known.length) parts.push(`已掌握 ${summary.known.length} 项`);
+    return parts.length ? parts.join(' ｜ ') : '问诊还没有答案。';
+  })();
   const teachingSection = c.profile === 'p2-teach'
     ? `<section class="research-teaching"><div class="research-workers-heading"><div><h3>学习对象与目标</h3><p>先真实检索资料，再拆知识点、算依赖图、排阶段、出自测题。阶段数决定计划分几步走，知识点上限决定拆得多细。</p></div></div>`
       + `<div class="research-budget-inline"><label>学习阶段数<input id="teaching-stages" type="number" min="${stageLo}" max="${stageHi}" value="${Number(teach.chapterCount) || 2}"></label><label>知识点上限<input id="teaching-points" type="number" min="${pointLo}" max="${pointHi}" value="${Number(teach.maxPoints) || (policy.teachingPointDefault || 12)}"></label></div>`
       + `<label class="research-teaching-field">学习对象<input id="teaching-audience" maxlength="80" value="${esc(teach.audience || '')}" placeholder="例如：有 Python 基础、不熟悉概率图模型的工程师"></label>`
       + `<label class="research-teaching-field">学习目标<input id="teaching-goal" maxlength="200" value="${esc(teach.learningGoal || '')}" placeholder="例如：能读懂扩散模型论文并自己实现一次采样"></label>`
       + `<label class="research-teaching-field">已具备的基础<textarea id="teaching-known" rows="2" maxlength="600" placeholder="每行一条，例如：概率论基础">${esc((teach.prerequisites || []).join('\n'))}</textarea></label>`
+      + `<div class="intake-row"><button type="button" class="secondary-button" data-open-intake>${teach.intake ? '查看或重做课前问诊' : '课前问诊：先让模型问我几个问题'}</button><span class="intake-row-note">${esc(intakeLine)}</span></div>`
       + `<p class="setting-help">写了的基础会被机械匹配：命中的知识点不进主路径（但仍保留一道自测题确认）。匹配不到的词会如实列在计划的「已知缺口」里，不会被悄悄忽略。</p></section>`
     : '';
   /* 顺序按 §15.1：档位（目标）→ 计划预览 → 模型分工 → 资料范围 → 预算 → 高级（复核）。 */
@@ -455,12 +469,108 @@ async function openResearchDialog() {
   renderResearchForm();
 }
 
+/* ── 课前问诊 ────────────────────────────────────────────────────────────
+ * 让模型按主题问几个问题，用户答完存进教学配置；跑计划时每一处要模型做判断的地方
+ * 都带上这份结论（拆多细、从哪起步、跳过什么、问到多深）。
+ *
+ * 三个约束：
+ *   1. 生成问题是一次独立模型调用，发生在运行之前，不进本轮账本——界面上写明了。
+ *   2. 问题与答案都存进配置：重跑、重新生成不必再答一遍。
+ *   3. 归并规则不在这里：界面只交原始答案，槽位摘要由主进程的 core/learning.cjs 算。 */
+let intakeDraft = null;
+
+/** 「想学的主题」的默认值：先看对话里最后一条用户消息，再看输入框里还没发出去的那句。 */
+function lastUserText() {
+  const messages = state.active?.messages || [];
+  for (let i = messages.length - 1; i >= 0; i--) if (messages[i]?.role === 'user' && messages[i].text?.trim()) return messages[i].text.trim().slice(0, 200);
+  /* 用户往往先写下主题、再去开配置：还没发出去的那句话同样是答案，别让他重打一遍。 */
+  return ($('#prompt')?.value || '').trim().slice(0, 200);
+}
+
+function intakeQuestionHtml(question) {
+  const answer = intakeDraft.answers?.[question.id];
+  const head = `<div class="intake-question-head"><strong>${esc(question.ask)}</strong>${question.slotLabel ? `<span class="intake-slot">${esc(question.slotLabel)}</span>` : ''}</div>`
+    + (question.why ? `<p class="intake-why">${esc(question.why)}</p>` : '');
+  if (question.kind === 'text') {
+    const value = Array.isArray(answer) ? answer.join('\n') : answer || '';
+    return `<section class="intake-question" data-intake-question="${esc(question.id)}">${head}<textarea data-intake-text rows="3" maxlength="800" placeholder="一行一个">${esc(value)}</textarea></section>`;
+  }
+  const multi = question.kind === 'multi';
+  const picked = new Set(Array.isArray(answer) ? answer : answer ? [answer] : []);
+  return `<section class="intake-question" data-intake-question="${esc(question.id)}">${head}<div class="intake-options">`
+    + (question.options || []).map(option => `<label class="intake-option"><input type="${multi ? 'checkbox' : 'radio'}" name="intake-${esc(question.id)}" value="${esc(option.label)}" data-intake-option ${picked.has(option.label) ? 'checked' : ''}><span><strong>${esc(option.label)}</strong>${option.hint ? `<small>${esc(option.hint)}</small>` : ''}</span></label>`).join('')
+    + `</div></section>`;
+}
+
+function renderIntakeDialog() {
+  $('#intake-topic').value = intakeDraft.topic || '';
+  $('#intake-greeting').textContent = intakeDraft.greeting || '';
+  const note = $('#intake-note');
+  note.textContent = intakeDraft.note || '';
+  note.classList.toggle('hidden', !intakeDraft.note);
+  $('#intake-questions').innerHTML = (intakeDraft.questions || []).map(intakeQuestionHtml).join('');
+  $('#intake-save').disabled = !(intakeDraft.questions || []).length;
+  $('#intake-generate').textContent = (intakeDraft.questions || []).length ? '重新生成问题' : '生成问题';
+}
+
+function collectIntakeAnswers() {
+  return (intakeDraft.questions || []).map(question => {
+    const row = document.querySelector(`[data-intake-question="${CSS.escape(question.id)}"]`);
+    if (!row) return null;
+    if (question.kind === 'text') return { id: question.id, value: row.querySelector('[data-intake-text]')?.value || '' };
+    const picked = [...row.querySelectorAll('[data-intake-option]')].filter(input => input.checked).map(input => input.value);
+    return { id: question.id, value: question.kind === 'multi' ? picked : (picked[0] || '') };
+  }).filter(Boolean);
+}
+
+function openIntakeDialog() {
+  researchDraft = collectResearchForm();
+  const existing = researchDraft.teaching?.intake || null;
+  intakeDraft = {
+    topic: existing?.topic || lastUserText(),
+    greeting: existing?.greeting || '',
+    questions: Array.isArray(existing?.questions) ? existing.questions : [],
+    answers: existing?.answers && typeof existing.answers === 'object' ? existing.answers : {},
+    note: ''
+  };
+  $('#intake-error').textContent = '';
+  renderIntakeDialog();
+  $('#intake-dialog').showModal();
+  if (!(intakeDraft.questions || []).length) $('#intake-topic').focus();
+}
+
+async function generateIntakeQuestions() {
+  const topic = $('#intake-topic').value.trim();
+  if (!topic) { $('#intake-error').textContent = '请先填写想学的主题：问题要针对它才问得准'; $('#intake-topic').focus(); return; }
+  const button = $('#intake-generate');
+  button.disabled = true;
+  button.textContent = '生成中…';
+  $('#intake-error').textContent = '';
+  try {
+    researchDraft = collectResearchForm();
+    const result = await window.duet.learningIntake({ config: { ...researchDraft, profile: 'p2-teach' }, topic });
+    /* 换了一批问题，之前按题号存的答案就对不上了——旧答案一并清掉，
+       留着只会让"第 2 题"指向另一个问题。 */
+    intakeDraft = { topic: result.topic || topic, greeting: result.greeting || '', questions: result.questions || [], answers: {}, note: result.note || '' };
+    renderIntakeDialog();
+  } catch (e) {
+    $('#intake-error').textContent = String(e.message || e).replace(/^Error invoking remote method '[^']+': Error: /, '');
+  } finally {
+    button.disabled = false;
+    /* 按当前状态重算按钮文字，不要恢复成进来时那个：
+       生成成功之后它就该是「重新生成问题」，恢复旧值会把刚生成的结果说成没生成。 */
+    button.textContent = (intakeDraft?.questions || []).length ? '重新生成问题' : '生成问题';
+  }
+}
+
 document.addEventListener('click', async event => {
   const b = event.target.closest('button'); if (!b) return;
   try {
     if (b.dataset.runMode) { await changeRunMode(b.dataset.runMode); return; }
     if (b.hasAttribute('data-open-models')) { openModelPicker(); return; }
     if (b.hasAttribute('data-open-research') || b.id === 'research-config-button') { openResearchDialog(); return; }
+    if (b.hasAttribute('data-open-intake')) { openIntakeDialog(); return; }
+    if (b.id === 'intake-generate') { await generateIntakeQuestions(); return; }
     if (b.dataset.pickerModel) { await toggleModel(b.dataset.pickerModel); renderModelPicker(); return; }
     if (b.id === 'manage-connections') { $('#models-dialog').close(); openSettings(); return; }
     if (b.id === 'add-connection') { openConnection(); return; }
@@ -584,5 +694,26 @@ document.addEventListener('DOMContentLoaded', () => {
       state.researchConfig = saved;
       $('#research-dialog').close(); renderModels(); toast('科研配置已保存');
     } catch (e) { $('#research-error').textContent = String(e.message || e).replace(/^Error invoking remote method '[^']+': Error: /, ''); }
+  });
+
+  /* 课前问诊 */
+  $('#intake-form').addEventListener('change', event => {
+    if (event.target.id === 'intake-topic') intakeDraft.topic = $('#intake-topic').value.trim();
+  });
+  $('#intake-form').addEventListener('submit', async event => {
+    event.preventDefault();
+    if (!intakeDraft) return;
+    const answers = collectIntakeAnswers();
+    try {
+      /* 归并在主进程算：界面只交原始答案，摘要与槽位映射只用一份规则。 */
+      const applied = await window.duet.learningIntakeApply({ intake: { ...intakeDraft, answers } });
+      researchDraft = collectResearchForm();
+      researchDraft.teaching = { ...(researchDraft.teaching || {}), intake: applied.intake };
+      $('#intake-dialog').close();
+      renderResearchForm();
+      toast('问诊已保存，跑计划时会按它排');
+    } catch (e) {
+      $('#intake-error').textContent = String(e.message || e).replace(/^Error invoking remote method '[^']+': Error: /, '');
+    }
   });
 });

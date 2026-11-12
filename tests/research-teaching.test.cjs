@@ -94,7 +94,7 @@ async function runWith(config, { onCall = () => {} } = {}) {
     onFinal: t => streamed.push(t),
     call: async a => {
       calls.push(a.stage);
-      onCall(a, materialsOf(a));
+      onCall(a, materialsOf(a), a.messages.at(-1).content);
       if (a.stage === 'research-scope') {
         a.onText(JSON.stringify({ objective: '系统掌握扩散模型的建模与采样', questions: ['前向过程怎么定义', '训练目标怎么来'], queries: ['diffusion model'], inclusion: ['同行评议'], exclusion: ['博客'] }));
       } else if (a.stage === 'research-evidence') {
@@ -123,7 +123,7 @@ test('P2 教学档默认配置能通过校验，基准调用数仍是 C+5', () =
     assert.ok(config.choices[role]?.provider, `${role} 缺少模型`);
   }
   assert.equal(profiles.isImplemented('p2-teach'), true);
-  assert.deepEqual(profiles.normalizeTeaching(config), { audience: '有基础的初学者', learningGoal: '理解概念及适用边界', prerequisites: [], stageCount: 2, maxPoints: 12 });
+  assert.deepEqual(profiles.normalizeTeaching(config), { audience: '有基础的初学者', learningGoal: '理解概念及适用边界', prerequisites: [], stageCount: 2, maxPoints: 12, intake: null });
 });
 
 test('教学档的学习阶段数与知识点上限会被校验挡住越界值', () => {
@@ -319,4 +319,83 @@ test('learning 模块的入口在 research 里可用（提示词与骨架打包�
   assert.equal(research.ROLE_LABEL.teachingOutline, '知识点拆解');
   assert.ok(research.STAGES.some(stage => stage.id === 'teaching-sections'));
   assert.equal(typeof learning.renderPlan, 'function');
+});
+
+/** 造一份答过问诊的配置：水平、目标、想覆盖、已掌握各一项。 */
+function withIntake(base, { known = '得分匹配', focus = '采样加速', level = '读过论文但没实现' } = {}) {
+  const { questions } = learning.normalizeIntake({
+    greeting: '先问几个问题',
+    questions: [
+      { ask: '你在这上面什么水平？', why: '决定起点', mapsTo: 'level', kind: 'single', options: [{ label: level }, { label: '没接触过' }] },
+      { ask: '想学到什么程度？', why: '决定收尾', mapsTo: 'goal', kind: 'single', options: [{ label: '能自己实现' }, { label: '能读懂推导' }] },
+      { ask: '想重点覆盖什么？', why: '决定保留哪些分支', mapsTo: 'focus', kind: 'multi', options: [{ label: focus }, { label: '条件生成' }] },
+      { ask: '你已经掌握了什么？', why: '命中的知识点不进主路径', mapsTo: 'known', kind: 'text', options: [] }
+    ]
+  });
+  const { intake } = learning.applyIntake({
+    topic: '扩散模型',
+    greeting: '先问几个问题',
+    questions,
+    answers: [
+      { id: 'q-1', value: level },
+      { id: 'q-2', value: '能自己实现' },
+      { id: 'q-3', value: [focus] },
+      { id: 'q-4', value: known }
+    ]
+  });
+  return research.validateConfig({ ...base, teaching: { ...base.teaching, intake } }, catalog);
+}
+
+test('课前问诊的结论进到了每一处要模型判断的地方', async () => {
+  const config = withIntake(teachConfig());
+  const prompts = new Map();
+  const materials = new Map();
+  const { run, results } = await runWith(config, {
+    onCall: (a, data, content) => {
+      prompts.set(a.stage, content);
+      materials.set(a.stage, data);
+    }
+  });
+  assert.equal(run.status, 'done');
+  /* 四个会做判断的环节都要看到问诊结论，而且是以「要求」的形式，不是丢在 JSON 里当背景。 */
+  for (const stage of ['research-scope', 'teaching-outline', 'teaching-sections', 'teaching-examples', 'research-final']) {
+    assert.match(prompts.get(stage), /学习者的课前问诊结论/, `${stage} 的提示词没有带上问诊结论`);
+    assert.match(prompts.get(stage), /读过论文但没实现/, `${stage} 的提示词没有带上自评水平`);
+  }
+  assert.match(prompts.get('teaching-outline'), /想覆盖的方向：采样加速/);
+  assert.match(prompts.get('research-final'), /课前问诊结论/);
+  /* 材料里也有一份结构化画像，模型可以逐字段引用。 */
+  assert.equal(materials.get('teaching-outline').learner.level, '读过论文但没实现');
+  assert.deepEqual(materials.get('teaching-sections').learner.focus, ['采样加速']);
+  /* 检索式要跟着水平走：scope 的原始提问换成问诊里的主题。 */
+  assert.equal(materials.get('research-scope').research, '扩散模型');
+
+  /* 问诊里写的「已掌握」自动并进先修排除，不需要界面再合并一次。 */
+  assert.ok(profiles.normalizeTeaching(config).prerequisites.includes('得分匹配'), '问诊的已掌握要并进先修输入');
+  assert.equal(config.teaching.prerequisites.includes('得分匹配'), false, '合并是派生视图，不污染用户手填的那份');
+  assert.deepEqual(run.learning.known.map(item => item.name), ['得分匹配'], '命中的知识点不进主路径');
+  assert.equal(results.learning.kit.known.length, 1);
+  const auditNames = run.audit.checks.map(check => check.name);
+  assert.ok(auditNames.includes('课前问诊已采纳'));
+  assert.match(run.audit.checks.find(check => check.name === '课前问诊已采纳').detail, /水平：读过论文但没实现/);
+  assert.ok(run.audit.checks.some(check => check.name === '已有基础已排除' && check.ok));
+  assert.ok(run.learning.intake?.summary?.focus.includes('采样加速'));
+});
+
+test('没做问诊时自检要说清楚：计划是按默认受众排的', async () => {
+  const { run } = await runWith(teachConfig());
+  const check = run.audit.checks.find(item => item.name === '课前问诊已采纳');
+  assert.ok(check);
+  assert.match(check.detail, /没有课前问诊/);
+});
+
+test('问诊改变 planVersion：同一份配置答得不一样，就是两份计划', () => {
+  const plan = require('../core/plan.cjs');
+  const plain = plan.compileConfigPlan(teachConfig());
+  const asked = plan.compileConfigPlan(withIntake(teachConfig()));
+  const other = plan.compileConfigPlan(withIntake(teachConfig(), { known: '得分匹配', focus: '条件生成', level: '没接触过' }));
+  assert.notEqual(plain.planVersion, asked.planVersion);
+  assert.notEqual(asked.planVersion, other.planVersion);
+  assert.equal(plain.stable.teaching.learner, null);
+  assert.ok(asked.stable.teaching.learner);
 });

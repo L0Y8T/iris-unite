@@ -310,3 +310,167 @@ test('摘要：给界面的 scale 信息与健康度', () => {
   assert.equal(summary.coverage.total, 5);
   assert.equal(typeof summary.deviations, 'number');
 });
+
+/* ── 课前问诊 ──────────────────────────────────────────────────────────── */
+
+const intakeRaw = () => ({
+  greeting: '先问三个问题，都是为了一会儿把计划排对。',
+  questions: [
+    { ask: '你熟悉重参数化技巧吗？', why: '不知道它就没法从 ELBO 走到训练目标', mapsTo: 'known', kind: 'text', options: [] },
+    {
+      ask: '你在扩散模型上目前是什么水平？', why: '决定从哪一层开始拆', mapsTo: 'level', kind: 'single',
+      options: [
+        { label: '没接触过', hint: '从高斯与马尔可夫链补起' },
+        { label: '读过 DDPM 论文但没实现', hint: '' },
+        { label: '自己实现过采样循环', hint: '' }
+      ]
+    },
+    { ask: '你想学到什么程度？', why: '决定计划在哪收尾', mapsTo: 'goal', kind: 'single', options: [{ label: '能读懂推导' }, { label: '能自己实现' }] },
+    { ask: '想重点覆盖哪些方向？', why: '决定保留哪些分支', mapsTo: 'focus', kind: 'multi', options: [{ label: '得分匹配' }, { label: '采样加速' }, { label: '条件生成' }] }
+  ]
+});
+
+test('问诊问题归一：保住针对性问题，丢掉答不出东西的，槽位编号稳定', () => {
+  const result = learning.normalizeIntake({
+    greeting: 'x',
+    questions: [
+      ...intakeRaw().questions,
+      { ask: '重复槽位', mapsTo: 'level', kind: 'single', options: [{ label: 'a' }, { label: 'b' }] },
+      { ask: '', mapsTo: 'style', kind: 'text', options: [] },
+      { ask: '槽位不认识', mapsTo: 'favColor', kind: 'text', options: [] },
+      { ask: '只有一个选项', mapsTo: 'avoid', kind: 'single', options: [{ label: '唯一' }] }
+    ]
+  });
+  assert.deepEqual(result.questions.map(question => question.id), ['q-1', 'q-2', 'q-3', 'q-4'], '编号按顺序重排，界面才对得上答案');
+  assert.deepEqual(result.questions.map(question => question.slot), ['known', 'level', 'goal', 'focus']);
+  assert.ok(result.dropped.some(item => /重复/.test(item.reason)));
+  assert.ok(result.dropped.some(item => /缺少题干/.test(item.reason)));
+  assert.ok(result.dropped.some(item => /不认识/.test(item.reason)));
+  assert.ok(result.dropped.some(item => /选项少于 2/.test(item.reason)));
+  assert.equal(result.questions[1].options.length, 3);
+});
+
+test('问诊问题归一：模型漏问 level/goal/known 时补通用问法，不能少问关键项', () => {
+  const result = learning.normalizeIntake({ questions: [{ ask: '随便问问', mapsTo: 'style', kind: 'single', options: [{ label: 'x' }, { label: 'y' }] }] });
+  assert.deepEqual(result.questions.map(question => question.slot), ['style', 'level', 'goal', 'known']);
+  assert.deepEqual(result.questions.filter(question => question.fallback).map(question => question.slot), ['level', 'goal', 'known']);
+  assert.ok(result.dropped.some(item => /已补通用问法/.test(item.reason)));
+});
+
+test('问诊问题归一：选择题选项缺 label 的被丢掉，最多留 5 个', () => {
+  const result = learning.normalizeIntake({
+    questions: [{
+      ask: '选一个', mapsTo: 'style', kind: 'multi',
+      options: [{ label: '甲' }, { hint: '没有 label' }, { label: '乙' }, { label: '丙' }, { label: '丁' }, { label: '戊' }, { label: '己' }]
+    }]
+  });
+  const style = result.questions.find(question => question.slot === 'style');
+  assert.equal(style.options.length, 5);
+  assert.deepEqual(style.options.map(option => option.label), ['甲', '乙', '丙', '丁', '戊']);
+});
+
+test('问诊作答：填空按行拆、多选合并、按槽位汇总', () => {
+  const { questions } = learning.normalizeIntake(intakeRaw());
+  const { intake, filled, empty } = learning.applyIntake({
+    topic: '扩散模型',
+    greeting: '先问三个问题',
+    questions,
+    answers: [
+      { id: 'q-1', value: '重参数化\nKL 散度，变分推断' },
+      { id: 'q-2', value: '读过 DDPM 论文但没实现' },
+      { id: 'q-3', value: '能自己实现' },
+      { id: 'q-4', value: ['得分匹配', '采样加速'] }
+    ]
+  });
+  assert.equal(intake.topic, '扩散模型');
+  assert.equal(intake.greeting, '先问三个问题');
+  assert.deepEqual(intake.summary.known, ['重参数化', 'KL 散度', '变分推断'], '一行一个的概念不能被拼成一条');
+  assert.equal(intake.summary.level, '读过 DDPM 论文但没实现');
+  assert.equal(intake.summary.goal, '能自己实现');
+  assert.deepEqual(intake.summary.focus, ['得分匹配', '采样加速']);
+  assert.deepEqual(filled, ['level', 'goal', 'focus', 'known']);
+  assert.deepEqual(empty, ['style', 'avoid', 'other']);
+});
+
+test('问诊作答：空答案不占槽位，多余的答案也不会串进别的槽位', () => {
+  const { questions } = learning.normalizeIntake(intakeRaw());
+  const { intake, filled } = learning.applyIntake({
+    questions,
+    answers: [{ id: 'q-1', value: '   ' }, { id: 'q-2', value: [] }, { id: 'q-99', value: '不存在的题' }, { id: 'q-3', value: '能读懂推导' }]
+  });
+  assert.deepEqual(filled, ['goal']);
+  assert.equal(intake.summary.goal, '能读懂推导');
+  assert.deepEqual(intake.summary.known, []);
+});
+
+test('界面直接交原始答案数组时也能归并（答案形状两种都收）', () => {
+  const { questions } = learning.normalizeIntake(intakeRaw());
+  /* 界面交的是 [{ id, value }]，配置里存的是 { id: value }。
+     只认后者的话，界面上答完摘要会是空的——真发生过一次。 */
+  const fromArray = learning.normalizeIntakeConfig({
+    topic: '扩散模型',
+    questions,
+    answers: [{ id: 'q-2', value: '读过 DDPM 论文但没实现' }, { id: 'q-1', value: 'KL 散度\n重参数化' }]
+  });
+  assert.equal(fromArray.summary.level, '读过 DDPM 论文但没实现');
+  assert.deepEqual(fromArray.summary.known, ['KL 散度', '重参数化']);
+  const fromMap = learning.normalizeIntakeConfig({
+    topic: '扩散模型',
+    questions,
+    answers: { 'q-2': '读过 DDPM 论文但没实现', 'q-1': 'KL 散度\n重参数化' }
+  });
+  assert.deepEqual(fromMap.summary, fromArray.summary, '两种形状要归并出同一份摘要');
+});
+
+test('存下来的问诊再洗一遍：保留结构与摘要，坏数据不进去', () => {  const { questions } = learning.normalizeIntake(intakeRaw());
+  const { intake } = learning.applyIntake({ topic: '扩散模型', questions, answers: [{ id: 'q-2', value: '没接触过' }] });
+  const clean = learning.normalizeIntakeConfig(intake);
+  assert.equal(clean.topic, '扩散模型');
+  assert.equal(clean.questions.length, 4);
+  assert.equal(clean.summary.level, '没接触过');
+  assert.equal(learning.normalizeIntakeConfig(null), null);
+  assert.equal(learning.normalizeIntakeConfig({ summary: { level: '  ' }, questions: [] }), null, '什么都没答就当没问过');
+  /* 槽位乱写的题被归到 other，不会悄悄顶替一个关键槽位。 */
+  const messy = learning.normalizeIntakeConfig({ questions: [{ ask: '问', slot: 'favColor', kind: 'text' }] });
+  assert.equal(messy.questions[0].slot, 'other');
+});
+
+test('看着提示词的学习者画像：空字段不出现，免得模型自己编一个', () => {
+  const { questions } = learning.normalizeIntake(intakeRaw());
+  const { intake } = learning.applyIntake({
+    topic: '扩散模型',
+    questions,
+    answers: [{ id: 'q-2', value: '自己实现过采样循环' }, { id: 'q-4', value: ['采样加速'] }]
+  });
+  const learner = learning.intakeForPrompt({ intake });
+  assert.deepEqual(learner, { topic: '扩散模型', level: '自己实现过采样循环', focus: ['采样加速'] });
+  assert.equal(Object.prototype.hasOwnProperty.call(learner, 'goal'), false);
+  assert.equal(learning.intakeForPrompt({}), null);
+  assert.equal(learning.intakeForPrompt({ intake: null }), null);
+});
+
+test('界面摘要：一眼看出这份计划按什么定的', () => {
+  const { questions } = learning.normalizeIntake(intakeRaw());
+  const { intake } = learning.applyIntake({
+    topic: '扩散模型',
+    questions,
+    answers: [{ id: 'q-1', value: '重参数化\nKL 散度' }, { id: 'q-2', value: '没接触过' }, { id: 'q-4', value: ['采样加速'] }]
+  });
+  const line = learning.renderIntakeSummary(intake);
+  assert.match(line, /主题：扩散模型/);
+  assert.match(line, /水平：没接触过/);
+  assert.match(line, /已掌握 2 项/);
+  assert.equal(learning.renderIntakeSummary(null), '');
+});
+
+test('问诊提示词：带上主题，并且不重复问配置里已经写过的已掌握概念', () => {
+  const prompt = learning.buildIntakePrompt({ topic: '扩散模型', teaching: { prerequisites: ['高斯分布', 'KL 散度'] } });
+  assert.match(prompt, /扩散模型/);
+  assert.match(prompt, /高斯分布、KL 散度/);
+  assert.match(prompt, /不要再问一遍/);
+  assert.match(prompt, /level/);
+  assert.match(prompt, /known/);
+  const empty = learning.buildIntakePrompt({});
+  assert.match(empty, /未填写/);
+  assert.doesNotMatch(empty, /不要再问一遍/);
+});

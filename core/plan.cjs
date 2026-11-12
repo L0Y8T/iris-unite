@@ -184,7 +184,9 @@ function compileConfigPlan(config) {
     taskChoices: config.tasks.map(t => t.choice || null),
     retrieval: { enabled: shape.retrievalEnabled, sources: [...config.retrieval.sources], maxQueries: config.retrieval.maxQueries, maxRecordsPerSource: config.retrieval.maxRecordsPerSource, maxRecordsPerRun: config.retrieval.maxRecordsPerRun },
     teachingChapters: shape.teaching ? shape.teaching.stageCount : 0,
-    teaching: shape.teaching ? { stageCount: shape.teaching.stageCount, maxPoints: shape.teaching.maxPoints } : null,
+    /* 学习计划的规模参数与问诊摘要都进 planVersion：同一份配置但问诊答得不一样，
+       拆出来的知识点就不一样，那是两份不同的计划，不能记成同一版。 */
+    teaching: shape.teaching ? { stageCount: shape.teaching.stageCount, maxPoints: shape.teaching.maxPoints, learner: shape.teaching.intake ? sha(shape.teaching.intake.summary).slice(0, 16) : null } : null,
     experiments: { enabled: profiles.experimentsEnabled(config), maxTrials: experimentPlan.maxTrials, maxRounds: experimentPlan.maxRounds, templateId: experimentPlan.templateId },
     budget: { maxCalls: config.budget.maxCalls, wallClockSec: config.budget.wallClockSec, modelTimeoutSec: config.budget.modelTimeoutSec, maxConcurrentModels: config.budget.maxConcurrentModels },
     mech: { enabled: config.mech?.enabled === true, triggers: [...(config.mech?.triggers || [])], maxMechCalls: Number(config.mech?.maxMechCalls || 0) },

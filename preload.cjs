@@ -28,6 +28,9 @@ contextBridge.exposeInMainWorld('duet', {
   knowledge: id => ipcRenderer.invoke('duet:knowledge', id),
   profiles: () => ipcRenderer.invoke('duet:profiles'),
   plan: input => ipcRenderer.invoke('duet:plan', input),
+  /* 课前问诊：让模型按主题问几个问题。不占本轮调用上限，属于配置动作。 */
+  learningIntake: input => ipcRenderer.invoke('duet:learning-intake', input),
+  learningIntakeApply: input => ipcRenderer.invoke('duet:learning-intake-apply', input),
   eventPing: () => ipcRenderer.invoke('duet:event-ping'),
   execTemplates: () => ipcRenderer.invoke('duet:exec-templates'),
   execPrepare: input => ipcRenderer.invoke('duet:exec-prepare', input),

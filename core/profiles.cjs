@@ -8,6 +8,10 @@
  * 避免 UI、计划编译器、运行器、审计各自复制一份规则。
  */
 
+/* 学习模式的纯计算层：课前问诊的结构归一放在那边，这里只引用，不复制规则。
+   learning.cjs 不依赖任何模块，所以这里不会形成环。 */
+const learning = require('./learning.cjs');
+
 const PROFILE_IDS = Object.freeze(['p0-query', 'p1-review', 'p2-teach']);
 
 /* 本期已经能真跑起来的档位。
@@ -211,14 +215,20 @@ function normalizeTeaching(config) {
   const [lo, hi] = POLICY.teachingChapters;
   const points = Number(raw.maxPoints ?? POLICY.teachingPointDefault);
   const [pLo, pHi] = POLICY.teachingPoints;
+  /* 课前问诊：答过就有，没答就是 null。它的「已掌握」要与手填的先修合并——
+     用户在面板里手写的和问卷里勾的本来是一回事，分成两路会让先修检查漏掉一半。 */
+  const intake = learning.normalizeIntakeConfig(raw.intake);
+  const declared = (Array.isArray(raw.prerequisites) ? raw.prerequisites : [])
+    .map(item => (typeof item === 'string' ? item : '')).map(item => item.trim().slice(0, 60)).filter(Boolean);
+  const fromIntake = intake?.summary?.known || [];
   return {
     audience: typeof raw.audience === 'string' && raw.audience.trim() ? raw.audience.trim().slice(0, 80) : '有基础的初学者',
     learningGoal: typeof raw.learningGoal === 'string' && raw.learningGoal.trim() ? raw.learningGoal.trim().slice(0, 200) : '理解概念及适用边界',
-    /* 用户声明「这些我已经会」：先修检查的唯一输入，命中的知识点不进主路径。 */
-    prerequisites: (Array.isArray(raw.prerequisites) ? raw.prerequisites : [])
-      .map(item => (typeof item === 'string' ? item : '')).map(item => item.trim().slice(0, 60)).filter(Boolean).slice(0, 12),
+    /* 「这些我已经会」：先修检查的唯一输入，命中的知识点不进主路径。 */
+    prerequisites: [...new Set([...declared, ...fromIntake])].slice(0, 12),
     stageCount: Math.min(hi, Math.max(lo, Number.isInteger(stages) ? stages : POLICY.teachingChapterDefault)),
-    maxPoints: Math.min(pHi, Math.max(pLo, Number.isInteger(points) ? points : POLICY.teachingPointDefault))
+    maxPoints: Math.min(pHi, Math.max(pLo, Number.isInteger(points) ? points : POLICY.teachingPointDefault)),
+    intake
   };
 }
 

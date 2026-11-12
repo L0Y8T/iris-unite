@@ -33,6 +33,7 @@ const STEPS = [
   { id: 'retry', name: '重新生成与旧答案保留', kind: 'node', file: 'tests/retry-check.cjs', spend: '无（本地假模型）', expect: '"passed": true', seconds: 8 },
   { id: 'research-run', name: '科研 草稿→核验→发布', kind: 'node', file: 'tests/research-run-check.cjs', spend: '无（本地假模型）', expect: '"passed": true', seconds: 7 },
   { id: 'research-ui', name: '档位选择与计划预览', kind: 'node', file: 'tests/research-ui-check.cjs', spend: '无', expect: '"passed": true', seconds: 7 },
+  { id: 'intake-ui', name: '课前问诊（问→答→存）', kind: 'node', file: 'tests/intake-ui-check.cjs', spend: '无（本地假模型）', expect: '"passed": true', seconds: 20 },
   { id: 'plan-ipc', name: '计划/档位接口', kind: 'node', file: 'tests/plan-ipc-check.cjs', spend: '无', expect: '"passed": true', seconds: 2 },
   { id: 'exec-ui', name: '实验面板（真跑一次）', kind: 'node', file: 'tests/exec-ui-check.cjs', spend: '无（真跑 Python）', expect: '"passed": true', seconds: 7 },
   { id: 'exec-gate', name: '实验→答案→数字门禁', kind: 'node', file: 'tests/exec-gate-check.cjs', spend: '无（真跑 Python + 假模型）', expect: '"passed": true', seconds: 5 },

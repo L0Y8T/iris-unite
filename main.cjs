@@ -14,6 +14,8 @@ const connections = require('./core/connections.cjs');
 const { runCustom, listModels } = require('./core/custom-provider.cjs');
 const llmRetry = require('./core/llm-retry.cjs');
 const research = require('./core/research.cjs');
+const learning = require('./core/learning.cjs');
+const { parseLoose } = require('./core/json-parse.cjs');
 const retrieval = require('./core/retrieval.cjs');
 const citation = require('./core/citation.cjs');
 const { KnowledgeBase } = require('./core/knowledge.cjs');
@@ -439,6 +441,80 @@ function setupIPC() {
     store.get(id);
     const kb = KnowledgeBase.load({ conversationId: id, dir: dataRoot });
     return { stats: kb.stats(), records: kb.all().map(({ abstract, ...rest }) => ({ ...rest, abstractLength: (abstract || '').length })) };
+  });
+
+  /* ── 课前问诊 ──────────────────────────────────────────────────────
+     让模型按主题问几个问题，用户在界面上答完，答案存进教学配置，之后每次跑计划都用它。
+     这是一次一次性模型调用，发生在运行之前、属于配置动作：
+     不进科研账本，也不占本轮调用上限（界面上写明了这一点）。
+     模型没返回可用问题时不算失败：兜底成通用问法，仍然把关键的三项问到手。 */
+  register('duet:learning-intake', async input => {
+    const raw = input?.config || (input?.id ? store.get(input.id).researchConfig : null);
+    if (!raw) throw new Error('缺少教学配置');
+    const config = research.validateConfig(raw, modelCatalog);
+    if (config.profile !== 'p2-teach') throw new Error('课前问诊只用于教学档（学习计划）');
+    const selected = config.choices.teachingOutline || config.choices.scope || config.choices.evidence || null;
+    if (!selected) throw new Error('请先给「知识点拆解」选一个模型');
+    ensureAvailable([selected.provider]);
+    const topic = String(input?.topic || config.teaching?.intake?.topic || '').trim().slice(0, 200);
+    if (!topic) throw new Error('请先填写想学的主题：问题要针对它才问得准');
+
+    const provider = selected.provider;
+    const scoped = { ...settings, ...(provider === 'gpt' ? { gptModel: selected.model, gptEffort: selected.effort } : provider === 'deepseek' ? { deepseekModel: selected.model, deepseekEffort: selected.effort } : {}) };
+    const controller = new AbortController();
+    /* 问诊不该让用户干等：两分钟没出完就用兜底问法继续，界面也不会卡在转圈上。 */
+    const timer = setTimeout(() => controller.abort(), 120000);
+    let output = '';
+    let failure = null;
+    try {
+      const args = {
+        conversation: null,
+        settings: scoped,
+        signal: controller.signal,
+        messages: [{ role: 'user', content: learning.buildIntakePrompt({ topic, teaching: config.teaching }) }],
+        cwd: dataRoot,
+        onText: text => { output += text; }
+      };
+      if (provider === 'deepseek') await providers.runDeepseek({ ...args, key: providers.deepseekKey(scoped, decrypt).key });
+      else if (provider !== 'gpt') {
+        const connection = settings.connections.find(item => item.id === provider);
+        if (!connection) throw new Error('所选通道已移除，请重新选择模型');
+        await runCustom({ ...args, connection, choice: selected, key: connection.encryptedKey ? decrypt(connection.encryptedKey) : '' });
+      } else {
+        /* Codex 只有带上 --output-schema 才会强制回 JSON，这条路径需要结构化输出。 */
+        const schemaFile = path.join(dataRoot, 'intake-schema-' + randomUUID() + '.json');
+        fs.writeFileSync(schemaFile, JSON.stringify(learning.INTAKE_SCHEMA));
+        try { await providers.runCodex({ ...args, outputSchemaPath: schemaFile }); }
+        finally { try { fs.unlinkSync(schemaFile); } catch { /* 已删除或从未创建 */ } }
+      }
+    } catch (error) {
+      if (!error?.name?.includes('Abort')) throw error;
+      failure = '问诊生成超时（120 秒），已改用通用问法';
+    } finally { clearTimeout(timer); }
+
+    const parsed = output.trim() ? parseLoose(output) : { ok: false, error: '模型没有返回内容' };
+    const normalized = learning.normalizeIntake(parsed.ok ? parsed.value : { questions: [] });
+    const degraded = !parsed.ok;
+    return {
+      ok: true,
+      degraded,
+      topic,
+      greeting: normalized.greeting || (degraded ? '这次没能按主题生成问题，先用通用问法问三项关键的。' : ''),
+      questions: normalized.questions,
+      dropped: normalized.dropped,
+      note: failure || (degraded ? `问题生成没有返回可用结构（${parsed.error || '空输出'}），已改用通用问法` : ''),
+      provider,
+      model: selected.model,
+      effort: selected.effort || null
+    };
+  });
+
+  /* 问诊答案落槽位：界面只交原始答案（勾了什么、填了什么字），
+     归并与摘要规则在 core/learning.cjs 里，只有一份。 */
+  register('duet:learning-intake-apply', input => {
+    const intake = learning.normalizeIntakeConfig(input?.intake);
+    if (!intake) throw new Error('问诊还没有任何答案，先答一题再保存');
+    return { ok: true, intake, summary: learning.renderIntakeSummary(intake), filled: intake.filled };
   });
 
   /* ── 实验执行 ──────────────────────────────────────────────────────

@@ -4,7 +4,28 @@
 
 原来三档里只有速查与综述能真跑，教学档停在「配置与计划可预览」——`PROFILE_STAGES['p2-teach']` 有三条节点，`assertRunnable` 在运行期直接拒绝。这次把它做成了**学习模式**：先真实检索资料，再拆知识点、算依赖图、排学习阶段、出带答案与判分口径的自测题。
 
+同一版里还加了**课前问诊**：跑之前模型先按主题问你几个问题，答案决定拆多细、从哪起步、跳过什么。
+
 细节见 `docs/learning-mode.md`。
+
+## 课前问诊：先问清水平与方向
+
+同一句「我想学扩散模型」，零基础的人和做过生成模型的人需要的计划完全不同。不问清楚，就只能给出对所有人都差不多、对谁都不够用的计划。
+
+配置面板里填一个主题 → 模型按**这个主题**出 4–6 个问题（问扩散模型就问「你熟不熟悉重参数化技巧」，而不是「你数学好不好」）→ 勾选/填写 → 答案存进配置。
+
+| 设计点 | 做法 | 为什么 |
+|---|---|---|
+| 问题槽位 | 七个固定槽位：水平 / 目标 / 讲法 / 想覆盖 / 不想深入 / 已掌握 / 其它 | 答案要能落进确定的位置，模型不能自己发明维度 |
+| 硬要求 | `水平`、`目标`、`已掌握` 三个必须有，模型漏问就补通用问法 | 这三项决定计划的基本形状；缺了等于没问诊 |
+| 答案怎么用 | 以**要求**的形式追加在四处提示词末尾，写清它该改变什么 | 只丢进 JSON 材料里，模型容易当背景扫过去，最后还是按默认粒度拆 |
+| 已掌握概念 | 直接并进先修检查 | 复用已有机械环节，不另写一套"跳过"逻辑 |
+| 那次调用 | 发生在运行之前，不进科研账本、不占本轮调用上限 | 属于配置动作，不是本轮的一步；界面写明了这一点 |
+| 归并规则 | 界面只交原始答案，槽位摘要由 `core/learning.cjs` 现算 | 渲染进程和主进程各写一份必然分叉 |
+| 可复用 | 问题与答案一起存进配置，重开能看到上次问的 | 重跑、重新生成不必再答一遍 |
+| 可追溯 | 自检固定一条「课前问诊已采纳」，没答过也写明计划按默认受众排 | 否则用户会以为这份计划已经按自己的水平排过了 |
+
+顺带一个影响：`planVersion` 现在包含问诊摘要。同一份配置但答得不一样，是两份不同的计划，不能记成同一版。
 
 ## 为什么改的是语义，不是加新档
 
@@ -47,22 +68,24 @@
 
 | 文件 | 作用 |
 |---|---|
-| `core/learning.cjs` | 学习模式的机械层：归一、连边、破环、分层、分阶段、先修匹配、自测校验、计划渲染 |
-| `tests/learning.test.cjs` | 25 条纯函数测试 |
-| `tests/research-teaching.test.cjs` | 12 条端到端测试（假模型驱动，不花钱） |
+| `core/learning.cjs` | 学习模式的机械层：归一、连边、破环、分层、分阶段、先修匹配、自测校验、计划渲染；课前问诊的问题归一、兜底槽位、答案归并与摘要 |
+| `tests/learning.test.cjs` | 35 条纯函数测试 |
+| `tests/research-teaching.test.cjs` | 15 条端到端测试（假模型驱动，不花钱） |
+| `tests/intake-ui-check.cjs` | 问诊全链路离线验收：真应用 + 本地假模型服务，从点按钮走到读回保存后的配置 |
 | `docs/learning-mode.md` | 设计说明与取舍 |
 
 ## 改变
 
 | 位置 | 改动 |
 |---|---|
-| `core/profiles.cjs` | `IMPLEMENTED_PROFILES` 加入 `p2-teach`；三个教学环节标签重写；新增 `normalizeTeaching()`、`POLICY.teachingPoints`；`validateShape` 校验受众/目标/阶段数/知识点上限（长度按**原始输入**判，不是截断后的值） |
-| `core/research.cjs` | 新增 `runTeachingFamily()`：拆解 → 建图 → 分阶段并行 → 出题 → 校验；`research` 与 `teaching` 两条收口提示词分开；自检新增四条教学结论；`run.learning` 落盘 |
-| `core/plan.cjs` | `stable.teaching` 快照（阶段数 + 知识点上限进 planVersion） |
+| `core/profiles.cjs` | `IMPLEMENTED_PROFILES` 加入 `p2-teach`；三个教学环节标签重写；新增 `normalizeTeaching()`、`POLICY.teachingPoints`；`validateShape` 校验受众/目标/阶段数/知识点上限（长度按**原始输入**判，不是截断后的值）；问诊的「已掌握」在派生视图里并进先修列表 |
+| `core/research.cjs` | 新增 `runTeachingFamily()`：拆解 → 建图 → 分阶段并行 → 出题 → 校验；`research` 与 `teaching` 两条收口提示词分开；自检新增五条教学结论；`run.learning` 落盘；问诊结论以 `learnerBrief()` 追加到四处提示词 |
+| `core/plan.cjs` | `stable.teaching` 快照（阶段数 + 知识点上限 + 问诊摘要哈希进 planVersion） |
 | `core/harness/gates.cjs` | 新增 `teachingGate`：骨架没排进阶段就不许继续花 C 次调用写正文 |
-| `main.cjs` | `duet:plan` 返回 `teaching`；`duet:profiles` 的 policy 带知识点上限 |
-| `renderer/iris-ui.js` | 教学档「学习对象与目标」面板；计划预览显示学习计划行；改阶段数时预算自动跟上 |
-| `renderer/dsh.css` | `.research-teaching` 区块样式 |
+| `main.cjs` | `duet:plan` 返回 `teaching`；`duet:profiles` 的 policy 带知识点上限；新增 `duet:learning-intake`（生成问题，一次独立调用）与 `duet:learning-intake-apply`（答案归并） |
+| `preload.cjs` | 暴露 `learningIntake` / `learningIntakeApply` |
+| `renderer/iris-ui.js` | 教学档「学习对象与目标」面板；课前问诊入口与对话框；计划预览显示学习计划行；改阶段数时预算自动跟上 |
+| `renderer/index.html` / `dsh.css` | 问诊对话框与问题卡样式 |
 
 ## 一个真实的界面 bug（改这次时踩到的）
 
@@ -74,17 +97,18 @@
 
 ## 自检
 
-教学档新增四条机械结论，进 `research-audit`：
+教学档新增五条机械结论，进 `research-audit`：
 
 - 知识点已排进学习阶段（结构问题清零）
 - 先修关系可排序（破环之后无环，层数）
 - 自测题覆盖知识点（`covered/total`，缺哪几个点名）
 - 已有基础已排除（按用户声明排除了哪几个）
+- 课前问诊已采纳（答过就写摘要；没答过也写明计划按默认受众排）
 
 ## 数字
 
 | 项 | 改前 | 改后 |
 |---|---|---|
 | 三档可运行 | 2 / 3 | **3 / 3** |
-| 单元测试 | 366 | **403** |
-| 验收步骤 | 16 | 16（`--skip-live` 全过） |
+| 单元测试 | 366 | **416** |
+| 验收步骤 | 16 | **17**（`--skip-live` 全过） |
