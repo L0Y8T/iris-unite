@@ -70,14 +70,79 @@ const RESEARCH_STAGES = [
 ];
 
 function renderModeControls() {
-  const busy = state.busy.has(state.active?.id), mode = runMode();
+  const busy = state.busy.has(state.active?.id), key = activeModeKey();
   $('#composer-mode').classList.toggle('hidden', !!isHistory());
-  document.querySelectorAll('[data-run-mode]').forEach(button => { button.classList.toggle('selected', button.dataset.runMode === mode); button.setAttribute('aria-pressed', String(button.dataset.runMode === mode)); button.disabled = busy || !!isHistory(); });
-  $('#research-config-button').classList.toggle('hidden', mode !== 'research'); $('#research-config-button').disabled = busy;
+  document.querySelectorAll('[data-run-mode]').forEach(button => { const on = button.dataset.runMode === key; button.classList.toggle('selected', on); button.setAttribute('aria-pressed', String(on)); button.disabled = busy || !!isHistory(); });
+  const researching = runMode() === 'research';
+  $('#research-config-button').classList.toggle('hidden', !researching); $('#research-config-button').disabled = busy;
 }
-async function changeRunMode(mode) {
+
+/* 三个按钮、两个模式。
+ *
+ * 「学习模式」不是一个新 mode，而是**科研模式 + 档位“学习”**的快捷入口：
+ * 底层的 mode 仍然只有 research / standard，账本、历史、IPC、校验全都不用改。
+ * 这样做的理由很直接——学习计划本来就走科研那条流水线（界定→检索→证据→…），
+ * 只是档位不同；给它另开一套 mode 会把这些共用部分复制一份。
+ *
+ * 高亮按「模式 + 档位」算，所以同一个 mode 下只有一个按钮是亮的。
+ */
+const LEARN_PROFILE = 'p2-teach';
+function activeModeKey() {
+  const mode = runMode();
+  if (mode !== 'research') return mode;
+  return currentResearch().profile === LEARN_PROFILE ? 'learn' : 'research';
+}
+
+/** 切档位：补齐该档需要的角色模型、重排任务、按新档重算预算。只在 researchDraft 上操作。 */
+async function chooseProfile(profileId) {
+  researchDraft.profile = profileId;
+  // 换档位时补齐该档需要而当前缺失的角色模型：用本档第一个可用模型兜底，用户可再改。
+  const info = profileInfo(profileId);
+  const fallback = researchDraft.choices.scope || researchDraft.choices.evidence || null;
+  for (const role of info.roles || []) if (!researchDraft.choices[role]) researchDraft.choices[role] = clone(fallback);
+  if (!researchDraft.tasks.length && (info.tasks?.[1] || 0) > 0) {
+    researchDraft.tasks = [
+      { id: 'concepts', title: '概念与分类', brief: '按可比条件梳理概念、方法与证据类型，指出适用范围。', choice: clone(fallback) },
+      { id: 'limits', title: '反例与局限', brief: '检查外推边界、相反证据与方法局限。', choice: clone(fallback) }
+    ];
+  }
+  if ((info.tasks?.[1] || 0) === 0) { researchDraft.tasks = []; researchDraft.allowRefinement = false; }
+  /* 实验族只对综述档开放。切到别的档却留着 enabled=true，保存时会被校验直接拒
+     （「学习档不支持自动实验」），现象是点了按钮没反应、只在 toast 里闪一句。
+     这里与配置面板里 collectResearchForm 的处理保持一致。 */
+  if (profileId !== 'p1-review') researchDraft.experiments = { ...(researchDraft.experiments || {}), enabled: false };
+  /* 预算按新档重算：先放到硬上限让编译器算出基准，再收回到「基准 + 一次可选深化」。 */
+  researchDraft.budget = { ...researchDraft.budget, maxCalls: researchMeta().policy?.maxCallsCap || 24 };
+  const plan = await refreshPlanPreview();
+  const base = plan?.baseCalls;
+  if (Number.isInteger(base) && base > 0) {
+    researchDraft.budget = { ...researchDraft.budget, maxCalls: base + (info.refinementAllowed ? 1 : 0) };
+    await refreshPlanPreview();
+  }
+  return researchDraft;
+}
+
+async function changeRunMode(key) {
   if (state.busy.has(state.active?.id) || isHistory()) return;
-  if (state.active) { const id = state.active.id, updated = await window.duet.runConfig(id, mode, currentResearch()); if (state.active?.id === id) { state.active.mode = updated.mode; state.active.researchConfig = updated.researchConfig; } }
+  /* 点「学习模式」= 进科研模式并把档位切到学习；点「科研模式」时若当前是学习档，
+     切回综述档，否则保留用户原本选的档位（速查档仍是速查档）。 */
+  const mode = key === 'standard' ? 'standard' : 'research';
+  let config = currentResearch();
+  if (mode === 'research') {
+    const wanted = key === 'learn' ? LEARN_PROFILE : (config.profile === LEARN_PROFILE ? 'p1-review' : config.profile);
+    if (wanted !== config.profile) {
+      /* 首次切档时面板可能还没渲染过（用户直接从「学习模式」按钮进来）。
+         先补一份元信息与草稿并把面板渲染出来，chooseProfile 读到的才是真输入框；
+         collectResearchForm 也做了缺元素兜底，两条路都不该抛错。 */
+      if (!state.researchProfiles) { try { state.researchProfiles = await window.duet.profiles(); } catch { /* 用兜底元信息 */ } }
+      researchDraft = researchDraft || currentResearch();
+      renderResearchForm();
+      researchDraft = await chooseProfile(wanted);
+      config = researchDraft;
+      renderResearchForm();
+    }
+  }
+  if (state.active) { const id = state.active.id, updated = await window.duet.runConfig(id, mode, config); if (state.active?.id === id) { state.active.mode = updated.mode; state.active.researchConfig = updated.researchConfig; } }
   state.mode = mode; renderModels(); renderRunStatus(); renderSetupNotice();
 }
 
@@ -430,14 +495,23 @@ function collectResearchForm() {
     next.tasks = [];
     next.allowRefinement = false;
   }
+  /* 配置面板可能还没渲染过（例如用户第一次就是从「学习模式」按钮进来的）。
+     这些读取全部按「没有输入框就保留原值」处理：收集函数不该因为 DOM 缺席而抛错，
+     否则切模式这条路径会静默失败，界面看起来像没反应。 */
+  const numOf = (selector, fallback) => {
+    const value = Number($(selector)?.value);
+    return Number.isFinite(value) && value > 0 ? value : fallback;
+  };
   next.retrieval = {
     ...next.retrieval,
-    enabled: info.retrievalRequired ? true : $('#retrieval-enabled').checked,
-    sources: [...document.querySelectorAll('[data-source]')].filter(i => i.checked).map(i => i.dataset.source),
-    maxRecordsPerSource: Number($('#retrieval-per-source').value),
-    perSource: Number($('#retrieval-per-source').value),
-    yearFrom: $('#retrieval-year-from').value ? Number($('#retrieval-year-from').value) : null,
-    maxQueries: Number($('#retrieval-max-queries').value)
+    enabled: info.retrievalRequired ? true : ($('#retrieval-enabled')?.checked ?? next.retrieval?.enabled !== false),
+    sources: document.querySelector('[data-source]')
+      ? [...document.querySelectorAll('[data-source]')].filter(i => i.checked).map(i => i.dataset.source)
+      : (next.retrieval?.sources || []),
+    maxRecordsPerSource: numOf('#retrieval-per-source', Number(next.retrieval?.maxRecordsPerSource) || 10),
+    perSource: numOf('#retrieval-per-source', Number(next.retrieval?.perSource) || Number(next.retrieval?.maxRecordsPerSource) || 10),
+    yearFrom: $('#retrieval-year-from') ? ($('#retrieval-year-from').value ? Number($('#retrieval-year-from').value) : null) : (next.retrieval?.yearFrom ?? null),
+    maxQueries: numOf('#retrieval-max-queries', Number(next.retrieval?.maxQueries) || 4)
   };
   /* 教学档的学习目标：切换档位后没渲染这块时，保留上一份值而不是清空。 */
   if (next.profile === 'p2-teach' && $('#teaching-audience')) {
@@ -451,9 +525,9 @@ function collectResearchForm() {
       prerequisites: [...new Set($('#teaching-known').value.split('\n').map(line => line.trim()).filter(Boolean))].slice(0, 12)
     };
   }
-  next.budget = { ...next.budget, maxCalls: Number($('#research-budget').value) };
-  next.allowRefinement = info.refinementAllowed === true ? $('#research-refinement').checked : false;
-  next.monitor = { enabled: $('#monitor-enabled').checked };
+  next.budget = { ...next.budget, maxCalls: numOf('#research-budget', Number(next.budget?.maxCalls) || 0) };
+  next.allowRefinement = info.refinementAllowed === true ? ($('#research-refinement')?.checked === true) : false;
+  next.monitor = { enabled: $('#monitor-enabled')?.checked !== false };
   return next;
 }
 async function openResearchDialog() {
@@ -593,26 +667,7 @@ document.addEventListener('click', async event => {
     if (b.dataset.researchProfile) {
       if (b.disabled) return;
       researchDraft = collectResearchForm();
-      researchDraft.profile = b.dataset.researchProfile;
-      // 换档位时补齐该档需要而当前缺失的角色模型：用本档第一个可用模型兜底，用户可再改。
-      const info = profileInfo(researchDraft.profile);
-      const fallback = researchDraft.choices.scope || researchDraft.choices.evidence || null;
-      for (const role of info.roles || []) if (!researchDraft.choices[role]) researchDraft.choices[role] = clone(fallback);
-      if (!researchDraft.tasks.length && (info.tasks?.[1] || 0) > 0) {
-        researchDraft.tasks = [
-          { id: 'concepts', title: '概念与分类', brief: '按可比条件梳理概念、方法与证据类型，指出适用范围。', choice: clone(fallback) },
-          { id: 'limits', title: '反例与局限', brief: '检查外推边界、相反证据与方法局限。', choice: clone(fallback) }
-        ];
-      }
-      if ((info.tasks?.[1] || 0) === 0) { researchDraft.tasks = []; researchDraft.allowRefinement = false; }
-      /* 预算按新档重算：先放到硬上限让编译器算出基准，再收回到「基准 + 一次可选深化」。 */
-      researchDraft.budget = { ...researchDraft.budget, maxCalls: researchMeta().policy?.maxCallsCap || 24 };
-      const plan = await refreshPlanPreview();
-      const base = plan?.baseCalls;
-      if (Number.isInteger(base) && base > 0) {
-        researchDraft.budget = { ...researchDraft.budget, maxCalls: base + (info.refinementAllowed ? 1 : 0) };
-        await refreshPlanPreview();
-      }
+      await chooseProfile(b.dataset.researchProfile);
       renderResearchForm();
       return;
     }

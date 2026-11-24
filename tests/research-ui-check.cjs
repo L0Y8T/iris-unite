@@ -189,6 +189,44 @@ async function freePort() {
     assert.equal(saved.final, null, '速查档不应保留反证与整合的模型');
     assert.equal(saved.maxCalls, 3, '速查档没有可选环节，预算应收到基准 3 次');
 
+    /* 顶层「学习模式」按钮：它不是第三个 mode，而是「科研模式 + 档位学习」的快捷入口。
+       放在最后测，是因为它会改档位状态——前面那些断言依赖 p1/p0 的默认形态。
+       用户真实反馈过「装了 1.2 但找不到学习模式」，所以这一条必须守住。 */
+    const modeButtons = await js(`[...document.querySelectorAll('[data-run-mode]')].map(b=>b.dataset.runMode)`);
+    console.log('模式按钮:', JSON.stringify(modeButtons));
+    assert.deepEqual(modeButtons, ['research', 'learn', 'standard'], '顶层要有学习模式入口');
+
+    await js(`document.querySelector('[data-run-mode="learn"]').click();true`);
+    await delay(1500);
+    const learn = await js(`(async()=>{
+      const c = await window.duet.get(state.active.id);
+      return {
+        mode: c.mode,
+        profile: c.researchConfig?.profile,
+        pressed: [...document.querySelectorAll('[data-run-mode]')].filter(b=>b.getAttribute('aria-pressed')==='true').map(b=>b.dataset.runMode),
+        badge: document.querySelector('#mode-badge').textContent.trim(),
+        configVisible: !document.querySelector('#research-config-button').classList.contains('hidden'),
+        chips: document.querySelector('#model-controls').textContent.replace(/\\s+/g,' ').trim()
+      };
+    })()`);
+    console.log('学习模式:', JSON.stringify(learn));
+    assert.equal(learn.mode, 'research', '学习模式底层仍是科研模式，账本与历史都不用改');
+    assert.equal(learn.profile, 'p2-teach', '学习模式必须把档位切到学习');
+    assert.deepEqual(learn.pressed, ['learn'], '同一时刻只有一个按钮是亮的');
+    assert.equal(learn.badge, '学习模式');
+    assert.equal(learn.configVisible, true, '学习模式下仍要能打开配置');
+    assert.match(learn.chips, /知识点拆解/, '输入区芯片要能看出是学习档：' + learn.chips);
+
+    await js(`document.querySelector('[data-run-mode="research"]').click();true`);
+    await delay(1500);
+    const backToResearch = await js(`(async()=>{
+      const c = await window.duet.get(state.active.id);
+      return { mode: c.mode, profile: c.researchConfig?.profile, pressed: [...document.querySelectorAll('[data-run-mode]')].filter(b=>b.getAttribute('aria-pressed')==='true').map(b=>b.dataset.runMode) };
+    })()`);
+    assert.equal(backToResearch.mode, 'research');
+    assert.equal(backToResearch.profile, 'p1-review', '从学习档点回科研模式应回到综述档');
+    assert.deepEqual(backToResearch.pressed, ['research']);
+
     assert.deepEqual(pageErrors, [], '界面不应有脚本错误：' + pageErrors.join(' | '));
     console.log(JSON.stringify({ passed: true, profiles: profiles.length, p0Base: 3, saved }, null, 2));
   } finally {

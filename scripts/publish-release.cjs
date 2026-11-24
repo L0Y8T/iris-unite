@@ -10,8 +10,10 @@
  *   node scripts/publish-release.cjs --tag v1.2.0 --dry-run ...    # 只打印要做什么
  *
  * 约定：
- *   - 令牌只从环境变量 GITHUB_TOKEN 读，读不到才退回 `git credential fill`（本机 GCM 存的那份）。
- *     令牌绝不打印、不写进日志、不进命令行参数（命令行参数会进 shell 历史与进程列表）。
+ *   - 令牌只从环境变量 GITHUB_TOKEN 读，不接受命令行参数（会进 shell 历史与进程列表）。
+ *     这里**故意不实现**「读本机 Git 凭据」的兜底：仓库卫生检查把那条命令列为禁止模式
+ *     列为禁止模式（历史上真有一个读凭据的调试脚本混进过公开仓库）。
+ *     需要时在 shell 里取一次、以环境变量传进来即可，读凭据的代码不落到仓库里。
  *   - 幂等：同名 release 已存在就复用；同名资产已存在就跳过，除非显式 --replace。
  *   - tag 必须已经存在。缺 tag 时脚本会失败而不是让 GitHub 在默认分支上凭空建一个——
  *     那种 tag 指向的源码和这个二进制根本对不上，是最糟的一种"看起来对"。
@@ -57,17 +59,14 @@ function repository() {
 }
 
 /**
- * 令牌：环境变量优先，否则问本机的 git 凭据管理器要。
- * 只在本进程里用，不打印、不落盘。
+ * 令牌：只认环境变量。
+ * 刻意不实现读本机 Git 凭据的兜底——那条命令是仓库卫生检查里的禁止模式，
+ * 历史上真有一个读凭据的调试脚本混进过公开仓库。要发布就在 shell 里取一次再传进来。
  */
 function token() {
-  const fromEnv = process.env.GITHUB_TOKEN;
-  if (fromEnv && fromEnv.trim()) return fromEnv.trim();
-  /* git credential fill 的输入与输出都不进日志：只在本进程的管道里过一遍。 */
-  const filled = spawnSync('git', ['credential', 'fill'], { input: 'protocol=https\nhost=github.com\n\n', encoding: 'utf8' });
-  const line = String(filled.stdout || '').split(/\r?\n/).find(item => item.startsWith('password='));
-  if (!line) throw new Error('没有可用令牌：请设置 GITHUB_TOKEN，或先在 git 里登录过 github.com');
-  return line.slice('password='.length);
+  const value = String(process.env.GITHUB_TOKEN || '').trim();
+  if (!value) throw new Error('缺少 GITHUB_TOKEN 环境变量（发布需要它；仓库里刻意不写读本机凭据的代码）');
+  return value;
 }
 
 async function api(auth, method, url, body) {

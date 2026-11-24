@@ -56,6 +56,9 @@ function selected(step) {
 function runStep(step) {
   const started = Date.now();
   const env = { ...process.env };
+  /* 宿主若留下 ELECTRON_RUN_AS_NODE=1，electron 会退化成纯 Node，所有界面验收都会
+     报「渲染进程没有起来」。这里统一摘掉，别让一条环境变量把整轮验收变成假失败。 */
+  delete env.ELECTRON_RUN_AS_NODE;
   if (step.exe) env.DUET_VERIFY_EXE = path.join(root, step.exe);
   let command;
   let args;

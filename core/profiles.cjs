@@ -107,7 +107,9 @@ const STAGE_META = Object.freeze({
 const PROFILE_INFO = Object.freeze({
   'p0-query': Object.freeze({ id: 'p0-query', name: '速查', outputRole: 'summarize', retrievalRequired: true, refinementAllowed: false, tasks: [0, 0] }),
   'p1-review': Object.freeze({ id: 'p1-review', name: '综述', outputRole: 'final', retrievalRequired: false, refinementAllowed: true, tasks: POLICY.p1Tasks }),
-  'p2-teach': Object.freeze({ id: 'p2-teach', name: '教学', outputRole: 'final', retrievalRequired: false, refinementAllowed: false, tasks: [0, 0] })
+  /* 名字只影响界面显示：用户找的是「学习」，不是「教学」。
+     内部 id 仍是 p2-teach（三个教学环节 id 与预算公式都挂在它上面，改名没有收益）。 */
+  'p2-teach': Object.freeze({ id: 'p2-teach', name: '学习', outputRole: 'final', retrievalRequired: false, refinementAllowed: false, tasks: [0, 0] })
 });
 
 const isProfile = value => PROFILE_IDS.includes(value);
