@@ -195,7 +195,27 @@ svg { stroke-width: 1.6; }
 .composer-mode { margin: 0 0 8px; padding: 0; }
 .mode-controls { padding: 2px; gap: 2px; border: 0; border-radius: var(--radius-pill); background: var(--soft); }
 .mode-controls button { height: 26px; min-height: 26px; padding: 0 12px; font-size: var(--text-xs); font-weight: 500; color: var(--muted); border-radius: var(--radius-pill); }
-.mode-controls button.selected { color: var(--ink); background: var(--surface); box-shadow: var(--elevation-stroke), 0 1px 2px #0000000a; }
+.mode-controls button.selected { color: var(--on-brand); background: var(--brand); box-shadow: none; }
+/* 学习模式独立页。复用 .library 的排版，只补它自己的表单与流程图。 */
+.learn-page .learn-pill { font-size: 11px; color: var(--accent); border: .5px solid color-mix(in srgb, var(--accent) 40%, transparent); background: color-mix(in srgb, var(--accent) 8%, transparent); border-radius: var(--radius-pill); padding: 2px 10px; }
+.learn-form { display: flex; flex-direction: column; gap: 12px; max-width: 720px; margin: 18px 0 8px; }
+.learn-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; }
+.learn-field { display: block; font-size: 11px; color: var(--muted); }
+.learn-field input, .learn-field textarea { display: block; width: 100%; margin-top: 5px; border: .5px solid var(--line-bold); border-radius: var(--radius-sm); padding: 8px 10px; background: var(--surface); color: var(--ink); font-size: var(--text-sm); font-family: inherit; resize: vertical; box-sizing: border-box; }
+.learn-field textarea#learn-topic { font-size: var(--text-md, var(--text-sm)); min-height: 78px; }
+.learn-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.learn-steps { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px; max-width: 720px; margin: 16px 0 8px; }
+.learn-step { display: flex; gap: 9px; align-items: flex-start; border: .5px solid var(--line); border-radius: var(--radius-lg); background: var(--surface); padding: 10px 12px; }
+.learn-step svg { width: 15px; height: 15px; margin-top: 1px; color: var(--muted); flex: none; }
+.learn-step strong { display: block; font-size: var(--text-sm); font-weight: 500; }
+.learn-step small { display: block; margin-top: 3px; font-size: 11px; line-height: 17px; color: var(--muted); }
+.learn-recent { max-width: 720px; margin-top: 18px; }
+.learn-recent h3 { font-size: var(--text-sm); margin: 0 0 8px; }
+.learn-recent-row { display: flex; align-items: center; gap: 10px; width: 100%; text-align: left; border: .5px solid var(--line); border-radius: var(--radius-sm); background: var(--surface); padding: 9px 11px; margin-bottom: 6px; font-size: var(--text-sm); color: var(--ink); }
+.learn-recent-row:hover { border-color: var(--line-bold); }
+.learn-recent-row span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.learn-recent-row small { color: var(--muted); font-size: 11px; }
+.learn-recent-row svg { width: 13px; height: 13px; color: var(--muted); }
 .research-config-button { font-size: var(--text-xs); height: 28px; padding: 0 10px; border-radius: var(--radius-pill); color: var(--secondary); }
 .research-config-button:hover { background: var(--hover); color: var(--ink); }
 

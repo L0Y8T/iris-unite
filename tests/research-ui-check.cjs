@@ -206,7 +206,9 @@ async function freePort() {
         pressed: [...document.querySelectorAll('[data-run-mode]')].filter(b=>b.getAttribute('aria-pressed')==='true').map(b=>b.dataset.runMode),
         badge: document.querySelector('#mode-badge').textContent.trim(),
         configVisible: !document.querySelector('#research-config-button').classList.contains('hidden'),
-        chips: document.querySelector('#model-controls').textContent.replace(/\\s+/g,' ').trim()
+        /* 学习模式现在有自己的页面：不再是聊天页加一排芯片。页面细节由 learn-page-check.cjs 守。 */
+        view: state.view,
+        hasLearnPage: !!document.querySelector('#content .learn-page')
       };
     })()`);
     console.log('学习模式:', JSON.stringify(learn));
@@ -215,17 +217,19 @@ async function freePort() {
     assert.deepEqual(learn.pressed, ['learn'], '同一时刻只有一个按钮是亮的');
     assert.equal(learn.badge, '学习模式');
     assert.equal(learn.configVisible, true, '学习模式下仍要能打开配置');
-    assert.match(learn.chips, /知识点拆解/, '输入区芯片要能看出是学习档：' + learn.chips);
+    assert.equal(learn.view, 'learn', '点学习模式要换到独立页，不能还停在聊天页');
+    assert.equal(learn.hasLearnPage, true);
 
     await js(`document.querySelector('[data-run-mode="research"]').click();true`);
     await delay(1500);
     const backToResearch = await js(`(async()=>{
       const c = await window.duet.get(state.active.id);
-      return { mode: c.mode, profile: c.researchConfig?.profile, pressed: [...document.querySelectorAll('[data-run-mode]')].filter(b=>b.getAttribute('aria-pressed')==='true').map(b=>b.dataset.runMode) };
+      return { mode: c.mode, profile: c.researchConfig?.profile, pressed: [...document.querySelectorAll('[data-run-mode]')].filter(b=>b.getAttribute('aria-pressed')==='true').map(b=>b.dataset.runMode), view: state.view };
     })()`);
     assert.equal(backToResearch.mode, 'research');
     assert.equal(backToResearch.profile, 'p1-review', '从学习档点回科研模式应回到综述档');
     assert.deepEqual(backToResearch.pressed, ['research']);
+    assert.equal(backToResearch.view, 'chat', '离开学习模式要回到聊天页');
 
     assert.deepEqual(pageErrors, [], '界面不应有脚本错误：' + pageErrors.join(' | '));
     console.log(JSON.stringify({ passed: true, profiles: profiles.length, p0Base: 3, saved }, null, 2));

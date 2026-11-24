@@ -142,8 +142,106 @@ async function changeRunMode(key) {
       renderResearchForm();
     }
   }
+  /* 没有打开的对话时，配置只能落在 state.researchConfig 上——否则 currentResearch()
+     仍读旧配置，按钮高亮会停在原来的模式上（页面已经换了、按钮没换，最容易被当成没反应）。 */
+  state.researchConfig = config;
   if (state.active) { const id = state.active.id, updated = await window.duet.runConfig(id, mode, config); if (state.active?.id === id) { state.active.mode = updated.mode; state.active.researchConfig = updated.researchConfig; } }
   state.mode = mode; renderModels(); renderRunStatus(); renderSetupNotice();
+  /* 学习模式有自己的一页：只改按钮高亮的话，界面看起来和科研模式一模一样，
+     用户会以为"点了没反应"。切到别的模式就回到聊天页。 */
+  if (key === 'learn') renderLearn(); else renderChat();
+}
+
+/* ── 学习模式独立页 ──────────────────────────────────────────────────────
+ * 为什么单独一页：学习计划和科研虽然共用同一条流水线，但入口完全不同——
+ * 科研是"提一个问题"，学习是"写一个主题、被问几句、拿到路线图"。
+ * 共用聊天首屏的结果是看不出区别，用户点了按钮以为没反应。
+ */
+function renderLearn() {
+  state.view = 'learn';
+  if (typeof prepareLibrary === 'function') prepareLibrary('学习模式');
+  $('#mode-badge').textContent = '学习模式';
+  $('#export-button').disabled = true;
+  $('#rename-button').disabled = true;
+  const teaching = currentResearch().teaching || {};
+  const recent = (typeof allConversations === 'function' ? allConversations() : [])
+    .filter(item => item?.researchConfig?.profile === 'p2-teach')
+    .slice(0, 5);
+  const recentHtml = recent.length
+    ? `<div class="learn-recent"><h3>最近的学习计划</h3>${recent.map(item => `<button class="learn-recent-row" data-thread="${esc(item.id)}"><span>${esc(item.title || '未命名学习计划')}</span><small>${esc(formatDate(item.updatedAt))}</small>${icon('arrow-right')}</button>`).join('')}</div>`
+    : '';
+  const steps = [
+    ['search', '检索真实资料', '先查学术库，把可引用的材料建成本轮资料库'],
+    ['plan', '拆知识点', '模型只交"有哪些点、谁依赖谁"，排序由程序算'],
+    ['compare', '排阶段', '按依赖分层合成学习阶段：目标、里程碑、常见误区'],
+    ['check', '出自测题', '每个知识点一道题，附参考答案与判分口径']
+  ];
+  $('#content').innerHTML = `<section class="library learn-page">
+    <div class="library-title"><h1>学习模式</h1><span class="learn-pill">知识点 · 依赖图 · 自测题</span></div>
+    <p class="library-subtitle">写一个想学的主题。可以先做课前问诊（模型按主题问你几个问题），也可以直接把水平与目标写在这里。</p>
+    <form id="learn-form" class="learn-form">
+      <label class="learn-field">想学的主题<textarea id="learn-topic" rows="3" maxlength="600" placeholder="例如：系统学一遍扩散模型的推导与采样">${esc(teaching.intake?.topic || '')}</textarea></label>
+      <div class="learn-row">
+        <label class="learn-field">目前水平（可选）<input id="learn-level" maxlength="80" placeholder="例如：读过论文但没推过"></label>
+        <label class="learn-field">想达到的程度（可选）<input id="learn-goal" maxlength="120" placeholder="例如：能自己实现采样"></label>
+      </div>
+      <label class="learn-field">已经掌握的概念（可选，一行一个）<textarea id="learn-known" rows="2" maxlength="400" placeholder="例如：KL 散度"></textarea></label>
+      <div class="learn-actions">
+        <button type="submit" class="primary-button" id="learn-start">生成学习计划</button>
+        <button type="button" class="secondary-button" data-open-intake>课前问诊：让模型先问我</button>
+      </div>
+      <p class="setting-help">这三个空填了会更贴合：水平决定从哪一层起步，目标决定计划在哪收尾，已掌握的概念会命中的知识点直接跳过。不填也能跑，只是按默认受众排。生成一轮会用 C+5 次模型调用（C = 学习阶段数，默认 2 → 7 次）；课前问诊额外一次、不占本轮上限。</p>
+    </form>
+    <div class="learn-steps">${steps.map(([glyph, title, detail], index) => `<div class="learn-step">${icon(glyph)}<div><strong>${index + 1}. ${esc(title)}</strong><small>${esc(detail)}</small></div></div>`).join('')}</div>
+    ${recentHtml}
+  </section>`;
+  if (typeof renderSidebar === 'function') renderSidebar();
+  const topic = $('#learn-topic');
+  if (topic && !topic.value) setTimeout(() => topic.focus(), 30);
+}
+
+/** 从学习页发起一轮：把主题与手填的三项变成配置，然后走正常的发送链路。 */
+async function startLearning() {
+  const topic = ($('#learn-topic')?.value || '').trim();
+  if (!topic) { toast('先写一个想学的主题'); $('#learn-topic')?.focus(); return; }
+  const level = ($('#learn-level')?.value || '').trim();
+  const goal = ($('#learn-goal')?.value || '').trim();
+  const known = ($('#learn-known')?.value || '').trim();
+
+  researchDraft = researchDraft || currentResearch();
+  await chooseProfile(LEARN_PROFILE);
+
+  /* 手填的三项等价于一次"没让模型出题的问诊"：走同一个归并入口，
+     后面所有提示词读到的仍是 teaching.intake，不需要第二条通路。 */
+  if (level || goal || known) {
+    const questions = [
+      { id: 'q-1', ask: '目前水平', why: '决定从哪一层起步', slot: 'level', slotLabel: '现有水平', kind: 'text', options: [] },
+      { id: 'q-2', ask: '想达到的程度', why: '决定计划在哪收尾', slot: 'goal', slotLabel: '想达到的程度', kind: 'text', options: [] },
+      { id: 'q-3', ask: '已经掌握的概念', why: '命中的知识点不进主路径', slot: 'known', slotLabel: '已掌握的具体概念', kind: 'text', options: [] }
+    ];
+    const answers = [{ id: 'q-1', value: level }, { id: 'q-2', value: goal }, { id: 'q-3', value: known }];
+    try {
+      const applied = await window.duet.learningIntakeApply({ intake: { topic, questions, answers } });
+      researchDraft.teaching = { ...(researchDraft.teaching || {}), intake: applied.intake };
+    } catch (error) {
+      /* 全空才会失败；上面已经判过至少一项非空，失败就如实说，别静默吞掉。 */
+      toast(`问诊信息没能写入：${String(error?.message || error).replace(/^Error invoking remote method '[^']+': Error: /, '')}`);
+    }
+  }
+
+  /* 持久化：有对话就存到对话上，没有就存成下一条消息的默认配置。 */
+  if (state.active) {
+    const id = state.active.id;
+    const updated = await window.duet.runConfig(id, 'research', researchDraft);
+    if (state.active?.id === id) { state.active.mode = updated.mode; state.active.researchConfig = updated.researchConfig; }
+  } else {
+    state.researchConfig = researchDraft;
+  }
+  state.mode = 'research';
+  $('#prompt').value = topic;
+  renderChat();
+  renderModels();
+  await send();
 }
 
 /** 输入区下面那排芯片：把每个环节实际会用到的模型直接摊开，不用点开面板才知道。 */
@@ -456,6 +554,9 @@ function renderResearchForm() {
 }
 
 function collectResearchForm() {
+  /* 直接落到学习页时 researchDraft 还没建过，这里补一份，
+     否则从学习页点「课前问诊」会因为读 undefined 而抛错。 */
+  researchDraft = researchDraft || currentResearch();
   const next = clone(researchDraft);
   const readChoice = key => {
     const select = document.querySelector(`[data-research-choice="${CSS.escape(key)}"]`);
@@ -636,6 +737,14 @@ async function generateIntakeQuestions() {
     button.textContent = (intakeDraft?.questions || []).length ? '重新生成问题' : '生成问题';
   }
 }
+
+/* 学习页的提交：表单是后渲染出来的，用委托监听，别绑在具体节点上。 */
+document.addEventListener('submit', async event => {
+  if (event.target?.id !== 'learn-form') return;
+  event.preventDefault();
+  try { await startLearning(); }
+  catch (error) { toast(String(error?.message || error).replace(/^Error invoking remote method '[^']+': Error: /, '')); }
+});
 
 document.addEventListener('click', async event => {
   const b = event.target.closest('button'); if (!b) return;
